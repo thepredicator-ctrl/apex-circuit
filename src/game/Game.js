@@ -398,7 +398,7 @@ export class Game {
     if (this._emitAcc > interval) {
       this._emitAcc = 0;
       const fwd = new THREE.Vector3(Math.sin(phys.heading), 0, Math.cos(phys.heading));
-      const right = new THREE.Vector3(fwd.z, 0, -fwd.x);
+      const right = new THREE.Vector3(-fwd.z, 0, fwd.x);   // matches Physics.rightOf
       const rear = phys.position.clone().addScaledVector(fwd, -1.4);
       const p1 = rear.clone().addScaledVector(right, 0.8);
       const p2 = rear.clone().addScaledVector(right, -0.8);
@@ -477,13 +477,14 @@ export class Game {
     const steps = Math.round(seconds / PHYS_STEP);
     this._simLock = true;
     for (let i = 0; i < steps; i++) {
-      // corner speed target from curvature over the next ~60 m
+      // corner speed target from curvature over the next ~90 m (0.92g margin
+      // keeps the P-controller inside the grip circle at corner entry)
       let maxCurv = 0;
-      for (let k = 1; k <= 24; k++) {
-        const si = Math.round(((p.s + (k * 2.5) / t.totalLength) % 1) * N) % N;
+      for (let k = 1; k <= 30; k++) {
+        const si = Math.round(((p.s + (k * 3) / t.totalLength) % 1) * N) % N;
         maxCurv = Math.max(maxCurv, Math.abs(t.curv[si]));
       }
-      const vT = Math.min(62, Math.sqrt(1.15 * 9.81 / Math.max(maxCurv, 0.0005)));
+      const vT = Math.min(62, Math.sqrt(0.92 * 9.81 / Math.max(maxCurv, 0.0005)));
       const lookM = Math.min(50, Math.max(6, p.vF));
       const ahead = t.pointAt((p.s + lookM / t.totalLength + 1) % 1);
       const dx = ahead.x - p.position.x, dz = ahead.z - p.position.z;
@@ -492,11 +493,14 @@ export class Game {
       while (err > Math.PI) err -= 2 * Math.PI;
       while (err < -Math.PI) err += 2 * Math.PI;
       const speedN = Math.min(1, Math.abs(p.vF) / 60);
-      const steer = Math.max(-1, Math.min(1, -err * (2.6 - 1.7 * speedN)));
+      const steer = Math.max(-1, Math.min(1, -err * (2.9 - 1.5 * speedN)));
       const throttle = p.vF < vT ? 1 : 0;
       const brake = p.vF > vT * 1.08 ? 1 : 0;
       p.update(PHYS_STEP, { state: { throttle, brake, steer, handbrake: false } },
         this.state === 'racing' && this.race.state === 'racing');
+      // drive the real race flow too (checkpoints, laps, finish) so this
+      // harness validates the full stack, not just physics
+      if (this.race.state === 'racing') this.race.update(PHYS_STEP, p);
       if (p.justHitWall) {
         hitWall++;
         if (this._apHits && this._apHits.length < 16) {

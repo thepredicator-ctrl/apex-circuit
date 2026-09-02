@@ -86,7 +86,9 @@ export class CameraRig {
   /** chase camera desired position + look target */
   _chaseDesired(phys, outPos, outLook) {
     const fwd = _fwd.set(Math.sin(phys.heading), 0, Math.cos(phys.heading));
-    const right = _right.set(fwd.z, 0, -fwd.x);
+    // screen-right for a viewer looking along fwd (matches Physics.rightOf —
+    // the previous inverted vector swung the camera to the inside of corners)
+    const right = _right.set(-fwd.z, 0, fwd.x);
     const speedN = Math.min(1, Math.abs(phys.vF) / CAR.maxSpeed);
 
     const dist = CAMERA.distanceBase + CAMERA.distanceSpeed * speedN;
@@ -153,10 +155,10 @@ export class CameraRig {
     car.cockpitAnchor.getWorldPosition(_world);
     // counter-inertia: head dips opposite to accel, leans opposite to cornering
     const fwd = _fwd.set(Math.sin(phys.heading), 0, Math.cos(phys.heading));
-    const right = _right.set(fwd.z, 0, -fwd.x);
+    const right = _right.set(-fwd.z, 0, fwd.x);   // screen-right (matches Physics)
     _tmp.copy(_world)
       .addScaledVector(fwd, -phys.aLongS * CAMERA.cockpitAccelDip)
-      .addScaledVector(right, -phys.latAccel * 0.0022);
+      .addScaledVector(right, phys.latAccel * 0.0022);
 
     const k = 1 - Math.exp(-CAMERA.cockpitDamping * this.smoothing * dt);
     if (this._first) {

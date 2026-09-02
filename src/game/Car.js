@@ -520,15 +520,16 @@ export class Car {
     const R = CAR.wheelRadius;
 
     // tire: cylinder + shoulder tori
+    // (wheel axle is model Z: cylinder rotated Y->Z; tori keep their default
+    //  Z axis so they lie flat in the wheel plane — rotating them would stand
+    //  them perpendicular to the tire like a gyroscope hoop)
     const tireGeo = new THREE.CylinderGeometry(R, R, 0.27, 20);
     tireGeo.rotateX(Math.PI / 2);
     const shoulderGeo = new THREE.TorusGeometry(R - 0.012, 0.024, 6, 20);
-    shoulderGeo.rotateY(Math.PI / 2);
 
-    // rim: outer ring + hub + 5 spokes (merged)
+    // rim: outer ring + hub + 5 spokes (merged) — all in the XY wheel plane
     const rimParts = [];
-    const ring = new THREE.TorusGeometry(0.195, 0.03, 6, 18);
-    ring.rotateY(Math.PI / 2);
+    const ring = new THREE.TorusGeometry(0.195, 0.03, 6, 18);   // default axis Z = axle
     rimParts.push(ring);
     const hub = new THREE.CylinderGeometry(0.062, 0.062, 0.24, 10);
     hub.rotateX(Math.PI / 2);
@@ -536,8 +537,7 @@ export class Car {
     for (let i = 0; i < 5; i++) {
       const a = (i / 5) * Math.PI * 2;
       const spoke = new THREE.BoxGeometry(0.03, 0.3, 0.05);
-      spoke.rotateX(a);
-      spoke.translate(0, 0, 0);
+      spoke.rotateZ(a);            // fan spokes within the wheel plane
       rimParts.push(spoke);
     }
     const rimGeo = mergeGeometries(rimParts, false);
