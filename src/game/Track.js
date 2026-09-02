@@ -1,18 +1,22 @@
 /**
- * Track — a complete procedural race circuit:
- * asphalt ribbon with painted edge lines, red/white curbs on the corners,
- * concrete walls, grass, trees, tire stacks, start/finish gantry,
- * checkpoint gates, grandstand, distant mountains and clouds.
+ * Track — a complete procedural race circuit with rolling elevation and
+ * banked corners: asphalt ribbon with painted edge lines, red/white curbs,
+ * gravel runoff, concrete walls, grass terrain that follows the road,
+ * trees, tire stacks, distance boards, sponsor boards, light poles,
+ * start/finish gantry with a 5-light start tree, checkpoint gates,
+ * grandstand, distant mountains and clouds.
  *
  * The circuit is a closed Catmull-Rom spline sampled into ~1000 points.
- * Those samples also power physics surface lookup and race progress.
+ * Sample heights come from a smooth global terrain function; corners get
+ * progressive banking. Those samples power physics surface lookup, car
+ * attitude (pitch/bank) and race progress.
  */
 
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { TRACK } from './Constants.js';
 
-// Circuit layout (x, z). s=0 sits on the start/finish straight heading +X.
+// Circuit layout (x, z). s=0 sits on the start/finish straight.
 const CONTROL_POINTS = [
   [-52, 132], [60, 134], [128, 122],
   [182, 74], [188, 8],
@@ -21,6 +25,16 @@ const CONTROL_POINTS = [
   [-186, -108], [-196, -34], [-162, 30],
   [-196, 88], [-148, 128]
 ];
+
+/** smooth global terrain height (drives track elevation + landscape) */
+function terrainH(x, z) {
+  return 2.1 * Math.sin(x * 0.0082 + 1.7) * Math.cos(z * 0.0074 + 0.4)
+    + 1.15 * Math.sin(x * 0.017 + 0.6) * Math.sin(z * 0.015 + 2.0)
+    + 0.55 * Math.cos(z * 0.031 + 0.8);
+}
+
+const BANK_GAIN = 5.2;        // banking slope per unit curvature
+const BANK_MAX = 0.105;       // ~6 deg
 
 function canvasTexture(w, h, draw, opts = {}) {
   const canvas = document.createElement('canvas');
@@ -77,6 +91,7 @@ export class Track {
     this._buildTextures(maxAnisotropy);
     this._buildCurveAndSamples();
     this._buildRoad();
+    this._buildRunoff();
     this._buildCurbs();
     this._buildWalls();
     this._buildGround();
@@ -84,6 +99,8 @@ export class Track {
     this._buildGantry();
     this._buildGates();
     this._buildGrandstand();
+    this._buildBoards();
+    this._buildLightPoles();
     this._buildTrees();
     this._buildTireStacks();
     this._buildMountains();
@@ -115,6 +132,21 @@ export class Track {
       ctx.fillRect(0, h / 2, w, h / 2);
       noise(ctx, w, h, 60, 0.1, '#00000022', '#ffffff22');
     }, { anisotropy: aniso });
+
+    this.texRunoff = canvasTexture(128, 128, (ctx, w, h) => {
+      ctx.fillStyle = '#8a8474';
+      ctx.fillRect(0, 0, w, h);
+      noise(ctx, w, h, 900, 0.22, '#6e685a', '#a49d8c');
+      for (let i = 0; i < 40; i++) {
+        ctx.fillStyle = '#75705f';
+        ctx.globalAlpha = 0.3;
+        ctx.beginPath();
+        ctx.arc(Math.random() * w, Math.random() * h, 3 + Math.random() * 8, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      ctx.globalAlpha = 1;
+    }, { anisotropy: aniso });
+    this.texRunoff.repeat.set(2, 1);
 
     this.texWall = canvasTexture(64, 64, (ctx, w, h) => {
       // u axis = wall height (bottom -> top)
@@ -175,17 +207,43 @@ export class Track {
       ctx.fillStyle = '#ff3b30';
       ctx.fillRect(w / 2 - 190, h / 2 + 34, 380, 5);
     }, { wrapS: THREE.ClampToEdgeWrapping, wrapT: THREE.ClampToEdgeWrapping, anisotropy: aniso });
+
+    this.texBoard = canvasTexture(128, 128, (ctx, w, h) => {
+      ctx.fillStyle = '#f2f4f6';
+      ctx.fillRect(0, 0, w, h);
+      const stripes = 3;
+      for (let i = 0; i < stripes; i++) {
+        ctx.fillStyle = i % 2 === 0 ? '#d8402f' : '#121418';
+        ctx.fillRect(14, 18 + i * 34, w - 28, 26);
+      }
+      ctx.strokeStyle = '#121418';
+      ctx.lineWidth = 6;
+      ctx.strokeRect(3, 3, w - 6, h - 6);
+    }, { wrapS: THREE.ClampToEdgeWrapping, wrapT: THREE.ClampToEdgeWrapping, anisotropy: aniso });
+
+    this.texSponsor = canvasTexture(512, 96, (ctx, w, h) => {
+      ctx.fillStyle = '#f2f4f6';
+      ctx.fillRect(0, 0, w, h);
+      ctx.fillStyle = '#121418';
+      ctx.font = 'italic 900 52px system-ui, sans-serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText('APEX CIRCUIT', w / 2, h / 2);
+      ctx.fillStyle = '#d8342a';
+      ctx.fillRect(0, h - 10, w, 10);
+    }, { wrapS: THREE.ClampToEdgeWrapping, wrapT: THREE.ClampToEdgeWrapping, anisotropy: aniso });
   }
 
   // ------------------------------------------------------------- centerline
   _buildCurveAndSamples() {
-    const pts = CONTROL_POINTS.map(([x, z]) => new THREE.Vector3(x, 0, z));
+    const pts = CONTROL_POINTS.map(([x, z]) => new THREE.Vector3(x, terrainH(x, z), z));
     this.curve = new THREE.CatmullRomCurve3(pts, true, 'centripetal');
 
     const N = TRACK.sampleCount;
     this.sampleCount = N;
     const spaced = this.curve.getSpacedPoints(N); // N+1, last == first
     this.px = new Float32Array(N);
+    this.py = new Float32Array(N);
     this.pz = new Float32Array(N);
     this.tanX = new Float32Array(N);
     this.tanZ = new Float32Array(N);
@@ -195,6 +253,7 @@ export class Track {
 
     for (let i = 0; i < N; i++) {
       this.px[i] = spaced[i].x;
+      this.py[i] = spaced[i].y;
       this.pz[i] = spaced[i].z;
     }
     // arc length (uniform spacing thanks to getSpacedPoints)
@@ -230,6 +289,66 @@ export class Track {
         for (let k = -6; k <= 6; k++) this.curbFlag[(i + k + N) % N] = 1;
       }
     }
+
+    // banking: raise the OUTER edge of corners (positive bank = right low)
+    const rawBank = new Float32Array(N);
+    for (let i = 0; i < N; i++) {
+      rawBank[i] = THREE.MathUtils.clamp(-this.curv[i] * BANK_GAIN, -BANK_MAX, BANK_MAX);
+    }
+    // wide smoothing so banking eases in/out progressively
+    this.bank = new Float32Array(N);
+    const W = 30;
+    for (let i = 0; i < N; i++) {
+      let sum = 0;
+      for (let k = -W; k <= W; k++) sum += rawBank[(i + k + N) % N];
+      this.bank[i] = sum / (2 * W + 1);
+    }
+
+    // slope along the tangent (for car pitch)
+    this.slope = new Float32Array(N);
+    for (let i = 0; i < N; i++) {
+      const prev = (i - 1 + N) % N;
+      const next = (i + 1) % N;
+      this.slope[i] = (this.py[next] - this.py[prev]) / (2 * this.spacing);
+    }
+  }
+
+  // -------------------------------------------------- surface height API
+  /**
+   * Road-surface height, slope and bank at a sample + lateral offset.
+   * Banking fades out through the runoff so the grass meets the terrain.
+   */
+  surfaceAt(idx, lateral) {
+    const half = this.roadHalfWidth;
+    const absLat = Math.abs(lateral);
+    let bankScale = 1;
+    const inner = half + 1.5;
+    if (absLat > inner) {
+      bankScale = Math.max(0, 1 - (absLat - inner) / 3.5);
+    }
+    const y = this.py[idx] + lateral * this.bank[idx] * bankScale;
+    return {
+      y,
+      slope: this.slope[idx],
+      bankSlope: this.bank[idx] * bankScale
+    };
+  }
+
+  /** world height for props / terrain blending (x, z) */
+  heightAtWorld(x, z) {
+    const N = this.sampleCount;
+    let best = -1, bestD = Infinity;
+    for (let i = 0; i < N; i += 5) {
+      const dx = x - this.px[i], dz = z - this.pz[i];
+      const d = dx * dx + dz * dz;
+      if (d < bestD) { bestD = d; best = i; }
+    }
+    const dist = Math.sqrt(bestD);
+    const lateral = (x - this.px[best]) * this.rightX[best] + (z - this.pz[best]) * this.rightZ[best];
+    const surf = this.surfaceAt(best, lateral);
+    const t = THREE.MathUtils.clamp((dist - (this.roadHalfWidth + 5.5)) / 45, 0, 1);
+    const tS = t * t * (3 - 2 * t);
+    return surf.y * (1 - tS) + terrainH(x, z) * tS;
   }
 
   // ------------------------------------------------------------------- road
@@ -241,8 +360,9 @@ export class Track {
       const j = i % N;
       const x = this.px[j], z = this.pz[j];
       const rx = this.rightX[j], rz = this.rightZ[j];
-      A.push(new THREE.Vector3(x + rx * half, 0.03, z + rz * half));
-      B.push(new THREE.Vector3(x - rx * half, 0.03, z - rz * half));
+      const bank = this.bank[j];
+      A.push(new THREE.Vector3(x + rx * half, this.py[j] + bank * half, z + rz * half));
+      B.push(new THREE.Vector3(x - rx * half, this.py[j] - bank * half, z - rz * half));
       vArr.push((i * this.spacing) / 9);
     }
     const geo = ribbonGeometry(A, B, vArr);
@@ -252,6 +372,36 @@ export class Track {
     const road = new THREE.Mesh(geo, mat);
     road.receiveShadow = true;
     this.group.add(road);
+  }
+
+  // ----------------------------------------------------------------- runoff
+  _buildRunoff() {
+    const N = this.sampleCount;
+    const half = this.roadHalfWidth;
+    const inner = half + 1.5;
+    const outer = half + 5.0;
+    const geos = [];
+    for (const side of [1, -1]) {
+      const A = [], B = [], vArr = [];
+      for (let i = 0; i <= N; i++) {
+        const j = i % N;
+        const x = this.px[j], z = this.pz[j];
+        const rx = this.rightX[j] * side, rz = this.rightZ[j] * side;
+        const yIn = this.py[j] + this.bank[j] * inner * side;
+        const yOut = this.py[j] + this.bank[j] * outer * Math.max(0, 1 - (outer - inner) / 3.5)
+          - 0.12; // drain gently toward the grass
+        A.push(new THREE.Vector3(x + rx * inner, yIn, z + rz * inner));
+        B.push(new THREE.Vector3(x + rx * outer, yOut, z + rz * outer));
+        vArr.push(i * this.spacing / 5);
+      }
+      geos.push(ribbonGeometry(A, B, vArr));
+    }
+    const runoff = new THREE.Mesh(
+      mergeGeometries(geos),
+      new THREE.MeshStandardMaterial({ map: this.texRunoff, roughness: 0.96, metalness: 0, side: THREE.DoubleSide })
+    );
+    runoff.receiveShadow = true;
+    this.group.add(runoff);
   }
 
   // ------------------------------------------------------------------ curbs
@@ -283,8 +433,10 @@ export class Track {
           const j = (a0 + k + N) % N;
           const x = this.px[j], z = this.pz[j];
           const rx = this.rightX[j] * side, rz = this.rightZ[j] * side;
-          A.push(new THREE.Vector3(x + rx * (half - 0.05), 0.05, z + rz * (half - 0.05)));
-          B.push(new THREE.Vector3(x + rx * (half + 1.35), 0.11, z + rz * (half + 1.35)));
+          const yIn = this.py[j] + this.bank[j] * (half - 0.05) * side + 0.03;
+          const yOut = this.py[j] + this.bank[j] * (half + 1.35) * side + 0.09;
+          A.push(new THREE.Vector3(x + rx * (half - 0.05), yIn, z + rz * (half - 0.05)));
+          B.push(new THREE.Vector3(x + rx * (half + 1.35), yOut, z + rz * (half + 1.35)));
           vArr.push((k * this.spacing) / 3);
         }
         geos.push(ribbonGeometry(A, B, vArr));
@@ -312,8 +464,10 @@ export class Track {
         const j = i % N;
         const x = this.px[j], z = this.pz[j];
         const rx = this.rightX[j] * side, rz = this.rightZ[j] * side;
-        A.push(new THREE.Vector3(x + rx * dist, 0.0, z + rz * dist));
-        B.push(new THREE.Vector3(x + rx * dist, 1.15, z + rz * dist));
+        // wall base sits on the runoff surface
+        const yBase = this.py[j] + this.bank[j] * dist * side * Math.max(0, 1 - (dist - (this.roadHalfWidth + 1.5)) / 3.5) - 0.05;
+        A.push(new THREE.Vector3(x + rx * dist, yBase, z + rz * dist));
+        B.push(new THREE.Vector3(x + rx * dist, yBase + 1.15, z + rz * dist));
         vArr.push((i * this.spacing) / 4);
       }
       geos.push(ribbonGeometry(A, B, vArr));
@@ -330,11 +484,21 @@ export class Track {
 
   // ------------------------------------------------------------------ grass
   _buildGround() {
+    const SIZE = 2400;
+    const SEG = 140;
+    const geo = new THREE.PlaneGeometry(SIZE, SIZE, SEG, SEG);
+    geo.rotateX(-Math.PI / 2);
+    const pos = geo.attributes.position;
+    for (let i = 0; i < pos.count; i++) {
+      const x = pos.getX(i);
+      const z = pos.getZ(i);
+      pos.setY(i, this.heightAtWorld(x, z) - 0.06);
+    }
+    geo.computeVertexNormals();
     const ground = new THREE.Mesh(
-      new THREE.PlaneGeometry(2400, 2400),
+      geo,
       new THREE.MeshStandardMaterial({ map: this.texGrass, roughness: 1, metalness: 0 })
     );
-    ground.rotation.x = -Math.PI / 2;
     ground.receiveShadow = true;
     this.group.add(ground);
   }
@@ -343,7 +507,7 @@ export class Track {
   _startPose() {
     const tan = this.tangentAt(0);
     return {
-      pos: new THREE.Vector3(this.px[0], 0, this.pz[0]),
+      pos: new THREE.Vector3(this.px[0], this.py[0], this.pz[0]),
       heading: Math.atan2(tan.x, tan.z),
       right: new THREE.Vector3(tan.z, 0, -tan.x)
     };
@@ -359,7 +523,7 @@ export class Track {
     line.rotation.order = 'YXZ';
     line.rotation.y = heading;
     line.rotation.x = -Math.PI / 2;
-    line.position.set(pos.x, 0.06, pos.z);
+    line.position.set(pos.x, pos.y + 0.06, pos.z);
     line.receiveShadow = true;
     this.group.add(line);
   }
@@ -368,13 +532,13 @@ export class Track {
     const { pos, heading } = this._startPose();
     const g = new THREE.Group();
     // inside this group: local +X = track right, local +Z = track tangent
-    g.position.set(pos.x, 0, pos.z);
+    g.position.set(pos.x, pos.y, pos.z);
     g.rotation.y = heading;
     const mat = new THREE.MeshStandardMaterial({ color: 0x2c313a, roughness: 0.6, metalness: 0.5 });
 
     for (const side of [1, -1]) {
-      const pillar = new THREE.Mesh(new THREE.BoxGeometry(0.7, 6.5, 0.7), mat);
-      pillar.position.set((this.roadHalfWidth + 2) * side, 3.25, 0);
+      const pillar = new THREE.Mesh(new THREE.BoxGeometry(0.7, 8.5, 0.7), mat);
+      pillar.position.set((this.roadHalfWidth + 2) * side, 3.2, 0); // sunk 1m into the ground
       pillar.castShadow = true;
       g.add(pillar);
     }
@@ -389,13 +553,52 @@ export class Track {
       new THREE.PlaneGeometry(this.roadHalfWidth * 2, 1.7),
       new THREE.MeshStandardMaterial({ map: this.texBanner, side: THREE.DoubleSide, roughness: 0.8 })
     );
-    // flip so the readable face greets oncoming cars (they approach the
-    // gantry from -tangent; the plane's front face points +tangent)
+    // flip so the readable face greets oncoming cars
     banner.rotation.y = Math.PI;
     banner.position.y = 5.25;
     g.add(banner);
 
+    // ---- start lights (5 lamps, driven by Game via setState) --------------
+    const lampPanel = new THREE.Mesh(new THREE.BoxGeometry(3.4, 0.9, 0.3), mat);
+    lampPanel.position.set(0, 7.15, 0.1);
+    g.add(lampPanel);
+    this.startLamps = [];
+    for (let i = 0; i < 5; i++) {
+      const lampMat = new THREE.MeshStandardMaterial({
+        color: 0x1a1d22, emissive: 0x000000, emissiveIntensity: 0, roughness: 0.4
+      });
+      const lamp = new THREE.Mesh(new THREE.SphereGeometry(0.26, 10, 8), lampMat);
+      lamp.position.set((i - 2) * 0.68, 7.15, -0.08); // facing oncoming cars (-tangent)
+      g.add(lamp);
+      this.startLamps.push(lampMat);
+    }
+
     this.group.add(g);
+  }
+
+  /**
+   * Start-light states: 0 = off, 1..5 = red lamps lit, 6 = all green,
+   * 7 = dark again.
+   */
+  setStartLights(state) {
+    if (!this.startLamps) return;
+    for (let i = 0; i < 5; i++) {
+      const mat = this.startLamps[i];
+      if (state >= 1 && state <= 5) {
+        const on = i < state;
+        mat.color.setHex(on ? 0x7a0d08 : 0x1a1d22);
+        mat.emissive.setHex(on ? 0xff2418 : 0x000000);
+        mat.emissiveIntensity = on ? 2.6 : 0;
+      } else if (state === 6) {
+        mat.color.setHex(0x0c5c26);
+        mat.emissive.setHex(0x2bff64);
+        mat.emissiveIntensity = 2.8;
+      } else {
+        mat.color.setHex(0x1a1d22);
+        mat.emissive.setHex(0x000000);
+        mat.emissiveIntensity = 0;
+      }
+    }
   }
 
   // ------------------------------------------------------------------ gates
@@ -413,11 +616,11 @@ export class Track {
       const p = this.pointAt(s);
       const heading = Math.atan2(tan.x, tan.z);
       const g = new THREE.Group();
-      g.position.set(p.x, 0, p.z);
+      g.position.set(p.x, p.y, p.z);
       g.rotation.y = heading;
 
       for (const side of [1, -1]) {
-        const post = new THREE.Mesh(new THREE.CylinderGeometry(0.09, 0.09, 3.4, 8), gateMat);
+        const post = new THREE.Mesh(new THREE.CylinderGeometry(0.09, 0.09, 3.8, 8), gateMat);
         post.position.set((this.roadHalfWidth + 0.5) * side, 1.7, 0);
         g.add(post);
       }
@@ -439,8 +642,16 @@ export class Track {
     const heading = Math.atan2(tan.x, tan.z);
     const g = new THREE.Group();
     // local +X = track right (stand sits on the -X side), local +Z = along track
-    g.position.set(p.x, 0, p.z);
+    g.position.set(p.x, p.y, p.z);
     g.rotation.y = heading;
+
+    // platform base sinks into the terrain so the stand never floats
+    const base = new THREE.Mesh(
+      new THREE.BoxGeometry(11, 3.4, 24.4),
+      new THREE.MeshStandardMaterial({ color: 0x3c4148, roughness: 0.95 })
+    );
+    base.position.set(-(this.roadHalfWidth + 7.4), -1.5, 0);
+    g.add(base);
 
     const stepMatA = new THREE.MeshStandardMaterial({ color: 0x565d66, roughness: 0.9 });
     const stepMatB = new THREE.MeshStandardMaterial({ color: 0x494f57, roughness: 0.9 });
@@ -466,7 +677,90 @@ export class Track {
       }
     }
 
+    // sponsor boards along the wall in front of the stand
+    for (const z of [-8, 0, 8]) {
+      const board = new THREE.Mesh(
+        new THREE.PlaneGeometry(6, 0.9),
+        new THREE.MeshStandardMaterial({ map: this.texSponsor, roughness: 0.7, side: THREE.DoubleSide })
+      );
+      board.position.set(-(this.roadHalfWidth + 3.2), 0.75, z);
+      board.rotation.y = Math.PI / 2;
+      g.add(board);
+    }
+
     this.group.add(g);
+  }
+
+  // ------------------------------------------------- boards (brake markers)
+  _buildBoards() {
+    const N = this.sampleCount;
+    const half = this.roadHalfWidth;
+    const spacingM = this.spacing;
+    const boardMat = new THREE.MeshStandardMaterial({ map: this.texBoard, roughness: 0.7, side: THREE.DoubleSide });
+    const postMat = new THREE.MeshStandardMaterial({ color: 0x3a3f46, roughness: 0.8 });
+
+    // find corner entries: curvature rising past threshold
+    const entries = [];
+    for (let i = 2; i < N; i++) {
+      if (Math.abs(this.curv[i]) > 0.012 && Math.abs(this.curv[i - 1]) <= 0.012) {
+        entries.push(i);
+      }
+    }
+
+    for (const e of entries) {
+      for (const backM of [90, 50]) {
+        const i = (e - Math.round(backM / spacingM) + N) % N;
+        const side = this.curv[e] > 0 ? -1 : 1; // boards on the outside of the corner
+        const x = this.px[i] + this.rightX[i] * (half + 2.6) * side;
+        const z = this.pz[i] + this.rightZ[i] * (half + 2.6) * side;
+        const y = this.heightAtWorld(x, z);
+        const g = new THREE.Group();
+        g.position.set(x, y, z);
+        g.rotation.y = Math.atan2(this.tanX[i], this.tanZ[i]);
+        const post = new THREE.Mesh(new THREE.CylinderGeometry(0.04, 0.04, 1.4, 6), postMat);
+        post.position.y = 0.7;
+        g.add(post);
+        const board = new THREE.Mesh(new THREE.PlaneGeometry(0.55, 0.55), boardMat);
+        board.position.y = 1.55;
+        board.rotation.y = side > 0 ? -Math.PI / 2 : Math.PI / 2;
+        g.add(board);
+        this.group.add(g);
+      }
+    }
+  }
+
+  // ------------------------------------------------------------ light poles
+  _buildLightPoles() {
+    const N = this.sampleCount;
+    const half = this.roadHalfWidth;
+    const poleMat = new THREE.MeshStandardMaterial({ color: 0x48505a, roughness: 0.6, metalness: 0.6 });
+    const lampMat = new THREE.MeshStandardMaterial({
+      color: 0xdde3ea, emissive: 0xfff3d0, emissiveIntensity: 0.35, roughness: 0.4
+    });
+    const geos = [];
+    const lampHeads = [];
+    for (let k = 0; k < 8; k++) {
+      const i = Math.round((k / 8) * N);
+      const side = k % 2 === 0 ? 1 : -1;
+      const x = this.px[i] + this.rightX[i] * (half + 7.5) * side;
+      const z = this.pz[i] + this.rightZ[i] * (half + 7.5) * side;
+      const y = this.heightAtWorld(x, z);
+      const pole = new THREE.CylinderGeometry(0.09, 0.14, 9, 8);
+      pole.translate(x, y + 4.5, z);
+      geos.push(pole);
+      const armDir = -side;
+      const arm = new THREE.CylinderGeometry(0.05, 0.05, 1.6, 6).rotateZ(Math.PI / 2);
+      arm.translate(x + this.rightX[i] * 0.8 * armDir, y + 9, z + this.rightZ[i] * 0.8 * armDir);
+      geos.push(arm);
+      const head = new THREE.BoxGeometry(0.7, 0.14, 0.3);
+      head.translate(x + this.rightX[i] * 1.5 * armDir, y + 8.95, z + this.rightZ[i] * 1.5 * armDir);
+      lampHeads.push(head);
+    }
+    const polesMesh = new THREE.Mesh(mergeGeometries(geos, false), poleMat);
+    polesMesh.castShadow = true;
+    this.group.add(polesMesh);
+    const headsMesh = new THREE.Mesh(mergeGeometries(lampHeads, false), lampMat);
+    this.group.add(headsMesh);
   }
 
   // ------------------------------------------------------------------ trees
@@ -485,7 +779,7 @@ export class Track {
         if (d < minD) minD = d;
       }
       minD = Math.sqrt(minD);
-      if (minD > half + 9 && minD < 170) positions.push([x, z]);
+      if (minD > half + 10 && minD < 170) positions.push([x, z]);
     }
 
     const trunkGeo = new THREE.CylinderGeometry(0.16, 0.26, 1.5, 6);
@@ -510,7 +804,8 @@ export class Track {
     const color = new THREE.Color();
     positions.forEach(([x, z], i) => {
       const s = 0.75 + Math.random() * 0.9;
-      dummy.position.set(x, 0.75 * s, z);
+      const y = this.heightAtWorld(x, z);
+      dummy.position.set(x, y + 0.7 * s, z);
       dummy.scale.setScalar(s);
       dummy.rotation.y = Math.random() * Math.PI * 2;
       dummy.updateMatrix();
@@ -519,7 +814,8 @@ export class Track {
     const fill = (mesh, list, baseY) => {
       list.forEach(([x, z], i) => {
         const s = 0.75 + Math.random() * 0.9;
-        dummy.position.set(x, baseY * s, z);
+        const y = this.heightAtWorld(x, z);
+        dummy.position.set(x, y + baseY * s, z);
         dummy.scale.setScalar(s);
         dummy.rotation.y = Math.random() * Math.PI * 2;
         dummy.updateMatrix();
@@ -549,7 +845,7 @@ export class Track {
         for (const side of [1, -1]) {
           const x = this.px[i] + this.rightX[i] * (half + 2.7) * side;
           const z = this.pz[i] + this.rightZ[i] * (half + 2.7) * side;
-          list.push([x, z]);
+          list.push([x, z, i, side]);
         }
       }
     }
@@ -561,13 +857,14 @@ export class Track {
     const dummy = new THREE.Object3D();
     const color = new THREE.Color();
     const palette = [0xd8402f, 0xe8eaec, 0x22252a];
-    list.forEach(([x, z], i) => {
-      dummy.position.set(x, 0.43, z);
+    list.forEach(([x, z, i, side], k) => {
+      const y = this.heightAtWorld(x, z);
+      dummy.position.set(x, y + 0.43, z);
       dummy.scale.setScalar(1);
       dummy.rotation.y = Math.random() * Math.PI;
       dummy.updateMatrix();
-      mesh.setMatrixAt(i, dummy.matrix);
-      mesh.setColorAt(i, color.setHex(palette[i % 3]));
+      mesh.setMatrixAt(k, dummy.matrix);
+      mesh.setColorAt(k, color.setHex(palette[k % 3]));
     });
     mesh.castShadow = true;
     this.group.add(mesh);
@@ -630,7 +927,7 @@ export class Track {
   // ------------------------------------------------------------- sampling API
   /**
    * Locate a world position relative to the circuit.
-   * @returns {{idx:number, s:number, lateral:number, rightX:number, rightZ:number, curb:boolean}}
+   * @returns {{idx:number, s:number, lateral:number, rightX:number, rightZ:number, tanX:number, tanZ:number, curb:boolean}}
    */
   locate(x, z, hintIdx = null) {
     const N = this.sampleCount;
@@ -668,6 +965,8 @@ export class Track {
       lateral,
       rightX: this.rightX[best],
       rightZ: this.rightZ[best],
+      tanX: this.tanX[best],
+      tanZ: this.tanZ[best],
       curb: this.curbFlag[best] === 1
     };
   }
@@ -680,7 +979,7 @@ export class Track {
     const j = (i + 1) % N;
     return new THREE.Vector3(
       THREE.MathUtils.lerp(this.px[i], this.px[j], t),
-      0,
+      THREE.MathUtils.lerp(this.py[i], this.py[j], t),
       THREE.MathUtils.lerp(this.pz[i], this.pz[j], t)
     );
   }

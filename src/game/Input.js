@@ -1,6 +1,11 @@
 /**
  * Input — unified keyboard + touch control state.
  * Produces a smoothed analog control vector regardless of input source.
+ *
+ * Driving: W/S or ↑/↓ throttle & brake, A/D or ←/→ steer, SPACE handbrake.
+ * Gearbox: Q downshift, E upshift (manual mode).
+ * Views/system: V camera, M transmission mode, R reset.
+ * All of the above also exist as touch buttons on mobile.
  */
 
 const KEY_ACTIONS = {
@@ -35,10 +40,16 @@ export class Input {
     };
 
     this._steerTarget = 0;
+    this.sensitivity = 1.0;   // steering ramp multiplier (settings)
 
     // edge callbacks (set by Game)
-    this.onResetKey = null;      // R pressed
-    this.onStartGesture = null;  // any key / tap — used for start screen
+    this.onResetKey = null;            // R pressed
+    this.onStartGesture = null;        // any key / tap — used for start screen
+    this.onShiftUp = null;             // E
+    this.onShiftDown = null;           // Q
+    this.onCameraToggle = null;        // V
+    this.onTransmissionToggle = null;  // M
+    this.onSettingsKey = null;         // Escape (menu screens keep priority)
     this._enabled = true;
 
     window.addEventListener('keydown', (e) => this._onKeyDown(e));
@@ -54,8 +65,15 @@ export class Input {
       this.onStartGesture(e);
     }
 
-    if (e.code === 'KeyR' && !e.repeat) {
-      if (this.onResetKey) this.onResetKey();
+    if (!e.repeat) {
+      switch (e.code) {
+        case 'KeyR': if (this.onResetKey) this.onResetKey(); break;
+        case 'KeyE': if (this.onShiftUp) this.onShiftUp(); break;
+        case 'KeyQ': if (this.onShiftDown) this.onShiftDown(); break;
+        case 'KeyV': if (this.onCameraToggle) this.onCameraToggle(); break;
+        case 'KeyM': if (this.onTransmissionToggle) this.onTransmissionToggle(); break;
+        case 'Escape': if (this.onSettingsKey) this.onSettingsKey(); break;
+      }
     }
 
     const action = KEY_ACTIONS[e.code];
@@ -103,8 +121,8 @@ export class Input {
 
     this._steerTarget = kRight - kLeft;
 
-    // steer ramp: quick to engage, quicker to center
-    const rate = this._steerTarget === 0 ? 7.5 : 5.2;
+    // steer ramp: quick to engage, quicker to center; sensitivity scales it
+    const rate = (this._steerTarget === 0 ? 7.5 : 5.2) * this.sensitivity;
     const diff = this._steerTarget - this.state.steer;
     const step = rate * dt;
     if (Math.abs(diff) <= step) this.state.steer = this._steerTarget;

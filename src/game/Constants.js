@@ -20,37 +20,78 @@ export const WORLD = {
 };
 
 export const CAR = {
-  maxSpeed: 62,            // m/s  (~223 km/h)
-  maxReverseSpeed: 12,
-  engineAccel: 26,         // m/s^2 at standstill
-  engineTaper: 2.1,        // exponent of the power curve
-  brakeDecel: 34,
-  reverseAccel: 11,
-  rollingResistance: 0.9,
-  airDrag: 0.00072,        // * v^2
-  wheelbase: 2.6,
+  mass: 1180,               // kg
+  wheelbase: 2.96,          // m (track 1.6 wide)
+  cgHeight: 0.52,           // m — drives longitudinal load transfer
+  weightDistFront: 0.52,    // static load fraction on the front axle
+  wheelRadius: 0.34,        // m — also used for wheel spin / rpm math
 
-  // lateral grip
-  gripAsphalt: 26,         // max lateral acceleration m/s^2
-  gripGrass: 9,
-  handbrakeGripFactor: 0.3,
-  highSteerGripFactor: 0.82,   // traction loss at full lock + speed
-  powerOversteerFactor: 0.86,  // traction loss at full throttle + steer
-  lateralDamp: 2.0,            // extra decay so slides settle
+  maxSpeed: 66,             // m/s (~238 km/h) achieved at redline in 6th
+  maxReverseSpeed: 11,
+  brakeDecel: 30,           // m/s^2 at full load
+  rollingResistance: 0.35,  // * g — radial tires
+  airDrag: 0.00042,         // * v^2 (Cd*A/rho folded in)
+  downforce: 1.9,           // * v^2 -> added vertical load (N)
+
+  // lateral grip (per-axle mu * load handles the rest)
+  gripAsphalt: 1.35,        // tire friction coefficient (dry asphalt, arcade-ish)
+  gripGrass: 0.55,
+  handbrakeRearGrip: 0.34,  // rear mu multiplier with handbrake
+  powerOversteerFactor: 0.80, // rear mu multiplier at high throttle + steer
+  highSteerGripFactor: 0.88,  // front mu loss at full lock + speed
+  lateralDamp: 1.6,         // extra slide settle
+  yawDamping: 7.5,          // yaw-rate response smoothing
 
   // yaw rate limits (speed dependent steering)
-  maxYawLowSpeed: 2.7,     // rad/s cap when slow
-  yawGripMultiplier: 1.16, // how close commanded yaw is to the grip circle
-  minSteerSpeed: 1.6,      // m/s below which steering fades out
+  maxYawLowSpeed: 2.6,      // rad/s cap when slow
+  yawGripMultiplier: 1.05,  // how close commanded yaw may hug the grip circle
+  minSteerSpeed: 1.4,       // m/s below which steering fades out
 
-  grassEngineFactor: 0.55,
-  grassDrag: 5.0,
+  grassDrag: 6.5,
 
   // collision
-  wallOffset: 3.4,         // wall distance beyond road half width
+  wallOffset: 3.4,          // wall distance beyond road half width
   carHalfWidth: 0.95,
-  wallBounce: 0.25,        // how much lateral velocity survives a hit
-  wallSpeedScrub: 0.86     // forward speed kept when scraping the wall
+  wallBounce: 0.25,         // how much lateral velocity survives a hit
+  wallSpeedScrub: 0.86      // forward speed kept when scraping the wall
+};
+
+/**
+ * Transmission / engine. Torque flows:
+ *   Fwheel = torque(rpm) * gearRatio * finalDrive * 0.9 / wheelRadius
+ * rpm = vF / wheelRadius * gearRatio * finalDrive * 60 / (2 pi)
+ */
+export const TRANSMISSION = {
+  idleRpm: 900,
+  redline: 7600,
+  rpmMaxSafe: 8000,        // hard cut
+  peakTorqueRpm: 5300,
+  maxTorque: 420,          // Nm at the crank
+  efficiency: 0.9,         // drivetrain
+  gearRatios: [3.55, 2.36, 1.85, 1.47, 1.2, 0.99], // 1..6
+  reverseRatio: 3.2,
+  finalDrive: 3.7,
+
+  autoUpshiftRpm: 7150,
+  autoDownshiftRpm: 2450,
+  autoDownshiftThrottle: 0.65, // kickdown below this shifts earlier (rpm<5k)
+  shiftTime: 0.22,         // s of torque cut between gears
+  shiftRpmEase: 9,         // rpm blend speed during a shift
+  clutchLockSpeed: 5.5,    // m/s below which the clutch slips on launch
+  clutchGrip: 34,          // max launch force m/s^2 while slipping
+  stallRpm: 500            // below this in-gear with clutch locked => slip too
+};
+
+export const SUSPENSION = {
+  travel: 0.085,           // m of visual wheel travel
+  // per-wheel compression inputs (fractions of travel), targets are damped
+  rate: 9,                 // spring responsiveness (damp constant)
+  bumpCurbAmp: 0.55,       // curb rumble amplitude (fraction of travel)
+  bumpCurbFreq: 46,
+  accelPitch: 0.02,        // rad at ~1g braking/accel
+  rollG: 0.032,            // rad per g lateral
+  maxRoll: 0.06,
+  maxPitch: 0.05
 };
 
 export const TRACK = {
@@ -60,32 +101,68 @@ export const TRACK = {
   totalLaps: 3
 };
 
-export const GEARS = [0, 9, 17, 26, 36, 48, 63]; // m/s boundaries, 6 gears
-
 export const CAMERA = {
+  // --- chase ---------------------------------------------------------------
   fovBase: 62,
   fovSpeedBoost: 11,
-  distanceBase: 7.4,
-  distanceSpeed: 3.4,
-  heightBase: 3.1,
-  heightSpeed: 0.6,
-  posDamping: 5.2,
-  lookDamping: 9.0,
-  lookAhead: 7.5,
-  rollMax: 0.045
+  distanceBase: 7.2,
+  distanceSpeed: 3.6,
+  heightBase: 2.95,
+  heightSpeed: 0.75,
+  posDamping: 5.0,
+  lookDamping: 9.5,
+  lookAhead: 8.5,
+  rollMax: 0.05,
+  // velocity prediction: how far ahead of the *velocity vector* the rig aims
+  velocityLead: 0.28,
+  accelLift: 0.55,         // camera rises back under acceleration (m)
+  brakeDive: 0.45,         // drops closer under braking (m)
+  // --- cockpit -------------------------------------------------------------
+  cockpitFov: 68,
+  cockpitPos: [-0.13, 1.06, 0.14], // local to car model space (nose=+Z)
+  cockpitLookAhead: 30,
+  cockpitDamping: 10,
+  cockpitAccelDip: 0.028,  // m of head travel per g
+  cockpitRollInfluence: 0.5
 };
 
-export function gearForSpeed(v) {
-  for (let i = GEARS.length - 1; i >= 0; i--) {
-    if (v >= GEARS[i]) return Math.min(i + 1, GEARS.length - 1);
+/** Graphics quality presets. */
+export const QUALITY = {
+  low: {
+    label: 'LOW',
+    pixelRatio: 1.0,
+    shadows: false,
+    shadowMapSize: 512,
+    fogFar: 780,
+    particles: 0.45,
+    aniso: 2
+  },
+  medium: {
+    label: 'MEDIUM',
+    pixelRatio: 1.75,
+    shadows: true,
+    shadowMapSize: 1024,
+    fogFar: 1100,
+    particles: 0.8,
+    aniso: 4
+  },
+  high: {
+    label: 'HIGH',
+    pixelRatio: 2.0,
+    shadows: true,
+    shadowMapSize: 2048,
+    fogFar: 1400,
+    particles: 1.2,
+    aniso: 8
   }
-  return 1;
-}
+};
 
-/** normalized rpm 0..1 inside the current gear band (for engine audio) */
-export function rpmNormForSpeed(v) {
-  const g = gearForSpeed(v);
-  const lo = GEARS[g - 1] ?? 0;
-  const hi = GEARS[g] ?? CAR.maxSpeed;
-  return Math.min(1, Math.max(0, (v - lo) / (hi - lo)));
-}
+export const DEFAULT_SETTINGS = {
+  transmission: 'auto',    // 'auto' | 'manual'
+  camera: 'chase',         // 'chase' | 'cockpit'
+  quality: 'medium',       // 'low' | 'medium' | 'high'
+  masterVolume: 0.9,       // 0..1
+  engineVolume: 0.8,       // 0..1
+  steerSensitivity: 1.0,   // 0.6..1.4 multiplier on steering ramp rate
+  cameraSmoothing: 1.0     // 0.6..1.4 multiplier on chase damping
+};
