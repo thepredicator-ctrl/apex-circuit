@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+  <meta name="theme-color" content="#0b0f14" />
+  <meta name="description" content="Apex Circuit — a 3D arcade racing game that runs in your browser. Three laps, drifting physics, touch controls." />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <link rel="icon" type="image/svg+xml" href="./favicon.svg" />
+  <title>Apex Circuit — 3D Arcade Racer</title>
+  <style>
+    /* Critical loading styles inline so the loading screen looks right before JS/CSS arrive */
+    html, body { margin: 0; padding: 0; background: #0b0f14; overflow: hidden; height: 100%; }
+    #app { position: fixed; inset: 0; }
+    #app canvas { display: block; }
+    .screen { position: fixed; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; z-index: 40; }
+    #loading-screen { background: radial-gradient(120% 120% at 50% 30%, #16202c 0%, #0b0f14 70%); color: #dfe9f3; font-family: system-ui, sans-serif; }
+    .spinner { width: 46px; height: 46px; border-radius: 50%; border: 4px solid rgba(255,255,255,.15); border-top-color: #ff3b30; animation: spin 0.9s linear infinite; margin-bottom: 18px; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+  </style>
+</head>
+<body>
+  <!-- WebGL canvas is injected here -->
+  <div id="app" aria-label="Game canvas"></div>
+
+  <!-- HUD (built dynamically by ui/HUD.js) -->
+  <div id="hud-root"></div>
+
+  <!-- Touch controls (built dynamically by ui/TouchControls.js) -->
+  <div id="touch-root"></div>
+
+  <!-- Loading -->
+  <div id="loading-screen" class="screen">
+    <div class="spinner"></div>
+    <div style="font-size:15px; letter-spacing:4px; font-weight:600;">LOADING TRACK…</div>
+  </div>
+
+  <!-- Start screen -->
+  <div id="start-screen" class="screen" style="display:none; background: linear-gradient(180deg, rgba(8,12,17,.88) 0%, rgba(8,12,17,.62) 45%, rgba(8,12,17,.92) 100%);">
+    <div class="start-inner">
+      <div class="start-kicker">3D ARCADE RACER</div>
+      <h1 class="start-title">APEX<span> CIRCUIT</span></h1>
+      <p class="start-sub">3 laps &middot; 3 checkpoints per lap &middot; beat your best time</p>
+      <button id="start-button" class="start-btn" type="button">TAP / PRESS ANY KEY TO START</button>
+      <div class="start-controls">
+        <div><b>Drive</b> W A S D or Arrow keys</div>
+        <div><b>Reset car</b> R &nbsp;&middot;&nbsp; <b>Handbrake</b> Space</div>
+        <div>On touch devices use the on-screen controls</div>
+      </div>
+      <div id="start-best" class="start-best" style="display:none;"></div>
+    </div>
+  </div>
+
+  <!-- Finish screen -->
+  <div id="finish-screen" class="screen" style="display:none;">
+    <div class="finish-panel">
+      <div class="finish-kicker">CHECKERED FLAG</div>
+      <h2 class="finish-title">FINISH!</h2>
+      <div id="finish-newbest" class="finish-newbest" style="display:none;">NEW BEST LAP!</div>
+      <div class="finish-stats">
+        <div class="finish-stat main"><span>Total time</span><b id="finish-total">--:--.---</b></div>
+        <div class="finish-stat"><span>Best lap</span><b id="finish-best">--:--.---</b></div>
+      </div>
+      <div id="finish-laps" class="finish-laps"></div>
+      <button id="restart-button" class="start-btn" type="button">RACE AGAIN</button>
+    </div>
+  </div>
+
+  <!-- Error overlay -->
+  <div id="error-overlay" class="screen" style="display:none; background: rgba(8,10,14,0.96); z-index: 60;">
+    <div class="error-panel">
+      <h2 style="margin:0 0 10px; font-size:22px; color:#ff6b61;">Something went wrong</h2>
+      <p id="error-message" style="margin:0 0 8px; line-height:1.5;">Unknown error</p>
+      <p id="error-hint" style="margin:0; opacity:.75; font-size:13px; line-height:1.5;"></p>
+    </div>
+  </div>
+
+  <script type="module" src="/src/main.js"></script>
+</body>
+</html>

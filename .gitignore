@@ -1,0 +1,25 @@
+# dependencies
+node_modules/
+
+# build output
+dist/
+
+# environment & secrets
+.env
+.env.*
+*.pem
+
+# system files
+.DS_Store
+Thumbs.db
+
+# logs
+*.log
+dev.log
+
+# workspace-only files (not part of the game)
+skills/
+download/
+upload/
+worklog.md
+.agent-browser/

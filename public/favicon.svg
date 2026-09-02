@@ -1,0 +1,27 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <rect width="64" height="64" rx="12" fill="#0b0f14"/>
+  <g>
+    <rect x="12" y="14" width="8" height="8" fill="#f4f6f8"/>
+    <rect x="20" y="14" width="8" height="8" fill="#1a212b"/>
+    <rect x="28" y="14" width="8" height="8" fill="#f4f6f8"/>
+    <rect x="36" y="14" width="8" height="8" fill="#1a212b"/>
+    <rect x="44" y="14" width="8" height="8" fill="#f4f6f8"/>
+    <rect x="12" y="22" width="8" height="8" fill="#1a212b"/>
+    <rect x="20" y="22" width="8" height="8" fill="#f4f6f8"/>
+    <rect x="28" y="22" width="8" height="8" fill="#1a212b"/>
+    <rect x="36" y="22" width="8" height="8" fill="#f4f6f8"/>
+    <rect x="44" y="22" width="8" height="8" fill="#1a212b"/>
+    <rect x="12" y="30" width="8" height="8" fill="#f4f6f8"/>
+    <rect x="20" y="30" width="8" height="8" fill="#1a212b"/>
+    <rect x="28" y="30" width="8" height="8" fill="#f4f6f8"/>
+    <rect x="36" y="30" width="8" height="8" fill="#1a212b"/>
+    <rect x="44" y="30" width="8" height="8" fill="#f4f6f8"/>
+    <rect x="12" y="38" width="8" height="8" fill="#1a212b"/>
+    <rect x="20" y="38" width="8" height="8" fill="#f4f6f8"/>
+    <rect x="28" y="38" width="8" height="8" fill="#1a212b"/>
+    <rect x="36" y="38" width="8" height="8" fill="#f4f6f8"/>
+    <rect x="44" y="38" width="8" height="8" fill="#1a212b"/>
+  </g>
+  <path d="M14 54 L38 54 L34 47 L18 47 Z" fill="#ff3b30"/>
+  <path d="M30 54 L50 54 L46 47 L34 47 Z" fill="#ff3b30" opacity="0.55"/>
+</svg>
