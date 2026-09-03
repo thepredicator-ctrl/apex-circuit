@@ -1,13 +1,26 @@
 /**
- * GameAudio — fully procedural engine / tire / wind audio via Web Audio API.
- * No external audio files, so there is nothing to load and nothing to fail
- * except Web Audio itself — and every entry point is guarded so the game
- * runs silently if audio is unavailable.
+ * GameAudio — procedural V10-style engine / tire / wind audio (Web Audio).
+ * No external audio files; every entry point is guarded so the game runs
+ * silently if audio is unavailable.
  *
- * Engine: the pitch tracks the TRANSMISSION's real rpm (firing frequency =
- * rpm/60 * 2 for a 4-stroke four), through a waveshaper for grit. Gains
- * split into master + engine channels so the settings menu can balance them.
- * Shifts add a short mechanical blip.
+ * Engine synthesis (why it doesn't sound like a vacuum cleaner):
+ *  - Firing frequency of a V10 four-stroke: f = rpm/60 * 5. At idle that is
+ *    a deep 75 Hz rumble; at 7600 rpm it screams at ~630 Hz.
+ *  - FOUR oscillator layers: a harmonic-rich PeriodicWave fundamental, a
+ *    half-order sub (square through a lowpass — the uneven-firing rumble),
+ *    a double-frequency saw that becomes the high-rpm "scream", and a
+ *    1.5-order saw for exhaust rasp. Each layer has its own gain curve so
+ *    the timbre SHAPES with rpm instead of just getting higher.
+ *  - Formant filters: a bandpass "exhaust body" that moves with revs, plus
+ *    a load-dependent lowpass — wide open under throttle, muted on lift.
+ *  - Combustion texture: bandpass-filtered noise locked to ~2x the firing
+ *    frequency, so the tone has roar instead of pure synth tones.
+ *  - Soft-clip waveshaper + dynamics compressor: dense, not buzzy.
+ *  - Idle burble: slow gain wobble layered in below ~1500 rpm.
+ *  - Exhaust crackles: randomized noise bursts on throttle lift at high
+ *    revs and on downshifts.
+ *  - Intake hiss, speed wind, cabin rumble, tire screech and curb rumble
+ *    round out the mix.
  */
 
 export class GameAudio {
@@ -18,6 +31,8 @@ export class GameAudio {
     this.available = false;
     this.masterVolume = 0.9;
     this.engineVolume = 0.8;
+    this._lastThrottle = 0;
+    this._t = 0;
   }
 
   /** Must be called from a user gesture (tap / key press). */
@@ -28,101 +43,179 @@ export class GameAudio {
       if (!Ctx) throw new Error('Web Audio API not available');
       this.ctx = new Ctx();
 
+      // --- master chain: gain -> compressor -> out ------------------------
       this.master = this.ctx.createGain();
       this.master.gain.value = this.masterVolume;
-      this.master.connect(this.ctx.destination);
 
-      // --- engine -----------------------------------------------------
-      // gentle saturation so the raw oscillators sound less buzzy
-      this.engineShaper = this.ctx.createWaveShaper();
-      const n = 256;
+      this.comp = this.ctx.createDynamicsCompressor();
+      this.comp.threshold.value = -14;
+      this.comp.knee.value = 22;
+      this.comp.ratio.value = 4;
+      this.comp.attack.value = 0.004;
+      this.comp.release.value = 0.16;
+      this.master.connect(this.comp);
+      this.comp.connect(this.ctx.destination);
+
+      // --- harmonic-rich periodic wave (the fundamental voice) ------------
+      const H = 20;
+      const real = new Float32Array(H);
+      const imag = new Float32Array(H);
+      for (let n = 1; n < H; n++) {
+        // decaying harmonics with a mild formant bump around n=4..6 —
+        // reads as "engine" rather than "buzzer"
+        const decay = 1 / Math.pow(n, 1.25);
+        const bump = 1 + 0.55 * Math.exp(-Math.pow((n - 5) / 2.4, 2));
+        const oddBoost = n % 2 === 1 ? 1.22 : 0.92;
+        imag[n] = decay * bump * oddBoost;
+      }
+      this.waveEngine = this.ctx.createPeriodicWave(real, imag, { disableNormalization: false });
+
+      // --- layer nodes ------------------------------------------------------
+      const mk = (type, freq) => {
+        const o = this.ctx.createOscillator();
+        if (type === 'wave') o.setPeriodicWave(this.waveEngine);
+        else o.type = type;
+        o.frequency.value = freq;
+        o.start();
+        return o;
+      };
+
+      // fundamental
+      this.oscA = mk('wave', 60);
+      this.gainA = this.ctx.createGain();
+      this.gainA.gain.value = 0.5;
+      this.oscA.connect(this.gainA);
+
+      // half-order sub rumble (uneven firing character)
+      this.oscB = mk('square', 30);
+      this.subLP = this.ctx.createBiquadFilter();
+      this.subLP.type = 'lowpass';
+      this.subLP.frequency.value = 240;
+      this.subLP.Q.value = 0.7;
+      this.gainB = this.ctx.createGain();
+      this.gainB.gain.value = 0.3;
+      this.oscB.connect(this.subLP);
+      this.subLP.connect(this.gainB);
+
+      // double-frequency scream layer
+      this.oscC = mk('sawtooth', 120);
+      this.oscC.detune.value = 5;
+      this.screamHP = this.ctx.createBiquadFilter();
+      this.screamHP.type = 'highpass';
+      this.screamHP.frequency.value = 700;
+      this.screamHP.Q.value = 0.8;
+      this.gainC = this.ctx.createGain();
+      this.gainC.gain.value = 0.08;
+      this.oscC.connect(this.screamHP);
+      this.screamHP.connect(this.gainC);
+
+      // 1.5-order exhaust rasp
+      this.oscD = mk('sawtooth', 90);
+      this.oscD.detune.value = -7;
+      this.gainD = this.ctx.createGain();
+      this.gainD.gain.value = 0.16;
+      this.oscD.connect(this.gainD);
+
+      // formant body filter for A + D (exhaust resonance)
+      this.formant = this.ctx.createBiquadFilter();
+      this.formant.type = 'bandpass';
+      this.formant.frequency.value = 150;
+      this.formant.Q.value = 1.0;
+      this.gainA.connect(this.formant);
+      this.gainD.connect(this.formant);
+
+      // combustion roar texture (noise locked to the firing rate)
+      const noiseBuf = this._makeNoise(2);
+      this.noiseSrc = this.ctx.createBufferSource();
+      this.noiseSrc.buffer = noiseBuf;
+      this.noiseSrc.loop = true;
+      this.roarBP = this.ctx.createBiquadFilter();
+      this.roarBP.type = 'bandpass';
+      this.roarBP.frequency.value = 260;
+      this.roarBP.Q.value = 2.4;
+      this.gainRoar = this.ctx.createGain();
+      this.gainRoar.gain.value = 0.12;
+      this.noiseSrc.connect(this.roarBP);
+      this.roarBP.connect(this.gainRoar);
+      this.noiseSrc.start();
+
+      // --- engine sum -> soft clip -> load lowpass -> gain -----------------
+      this.engineSum = this.ctx.createGain();
+      this.engineSum.gain.value = 0.9;
+      this.gainB.connect(this.engineSum);
+      this.gainC.connect(this.engineSum);
+      this.formant.connect(this.engineSum);
+      this.gainRoar.connect(this.engineSum);
+
+      this.shaper = this.ctx.createWaveShaper();
+      const n = 512;
       const curve = new Float32Array(n);
       for (let i = 0; i < n; i++) {
         const x = (i / (n - 1)) * 2 - 1;
-        curve[i] = Math.tanh(x * 2.2) * 0.85;
+        curve[i] = Math.tanh(x * 1.7) * 0.92;
       }
-      this.engineShaper.curve = curve;
+      this.shaper.curve = curve;
+      this.shaper.oversample = '2x';
+      this.engineSum.connect(this.shaper);
 
-      this.engineFilter = this.ctx.createBiquadFilter();
-      this.engineFilter.type = 'lowpass';
-      this.engineFilter.frequency.value = 900;
-      this.engineFilter.Q.value = 0.9;
+      this.engineLP = this.ctx.createBiquadFilter();
+      this.engineLP.type = 'lowpass';
+      this.engineLP.frequency.value = 900;
+      this.engineLP.Q.value = 0.8;
+      this.shaper.connect(this.engineLP);
 
       this.engineGain = this.ctx.createGain();
       this.engineGain.gain.value = 0;
-
-      this.osc1 = this.ctx.createOscillator();
-      this.osc1.type = 'sawtooth';
-      this.osc1.frequency.value = 30;
-
-      this.osc2 = this.ctx.createOscillator();
-      this.osc2.type = 'square';
-      this.osc2.frequency.value = 60;
-      const osc2Gain = this.ctx.createGain();
-      osc2Gain.gain.value = 0.35;
-
-      this.osc3 = this.ctx.createOscillator();
-      this.osc3.type = 'sawtooth';
-      this.osc3.frequency.value = 90;
-      this.osc3.detune.value = 8;
-      const osc3Gain = this.ctx.createGain();
-      osc3Gain.gain.value = 0.22;
-
-      this.osc1.connect(this.engineFilter);
-      this.osc2.connect(osc2Gain);
-      osc2Gain.connect(this.engineFilter);
-      this.osc3.connect(osc3Gain);
-      osc3Gain.connect(this.engineFilter);
-      this.engineFilter.connect(this.engineShaper);
-      this.engineShaper.connect(this.engineGain);
+      this.engineLP.connect(this.engineGain);
       this.engineGain.connect(this.master);
-      this.osc1.start();
-      this.osc2.start();
-      this.osc3.start();
 
-      // --- shared noise buffer ----------------------------------------
-      const len = this.ctx.sampleRate * 2;
-      this.noiseBuffer = this.ctx.createBuffer(1, len, this.ctx.sampleRate);
-      const data = this.noiseBuffer.getChannelData(0);
-      for (let i = 0; i < len; i++) data[i] = Math.random() * 2 - 1;
+      // --- shared noise helpers ---------------------------------------------
+      this.noiseBuffer = noiseBuf;
+
+      // intake hiss (rises with throttle x revs)
+      this.intakeFilter = this.ctx.createBiquadFilter();
+      this.intakeFilter.type = 'highpass';
+      this.intakeFilter.frequency.value = 1700;
+      this.intakeGain = this._noiseChannel(this.intakeFilter, 0);
 
       // wind (speed rush)
-      this.windGain = this._noiseChannel('lowpass', 420, 0.7, 0);
+      this.windFilter = this.ctx.createBiquadFilter();
+      this.windFilter.type = 'lowpass';
+      this.windFilter.frequency.value = 520;
+      this.windGain = this._noiseChannel(this.windFilter, 0);
+
+      // cabin rumble (speed pressure + curb knock)
+      this.cabinFilter = this.ctx.createBiquadFilter();
+      this.cabinFilter.type = 'lowpass';
+      this.cabinFilter.frequency.value = 82;
+      this.cabinGain = this._noiseChannel(this.cabinFilter, 0);
+
       // tire screech
       this.screechFilter = this.ctx.createBiquadFilter();
       this.screechFilter.type = 'bandpass';
       this.screechFilter.frequency.value = 1150;
       this.screechFilter.Q.value = 2.2;
       this.screechGain = this._noiseChannel(this.screechFilter, 0);
-      // curb rumble
-      this.rumbleFilter = this.ctx.createBiquadFilter();
-      this.rumbleFilter.type = 'lowpass';
-      this.rumbleFilter.frequency.value = 95;
-      this.rumbleGain = this._noiseChannel(this.rumbleFilter, 0);
 
       this.started = true;
       this.available = true;
-      console.log('[ApexCircuit] Audio initialized');
+      console.log('[ApexCircuit] Audio initialized (V10 synthesis)');
     } catch (err) {
       console.warn('[ApexCircuit] Audio disabled:', err);
       this.available = false;
     }
   }
 
-  /** helper: looping noise source through an optional filter into a gain */
-  _noiseChannel(filterOrType, freqOrGain, q, gain0) {
-    // flexible signature: (filterNode, gain) or (type, freq, q, gain)
-    let filter = null, gainVal = 0;
-    if (typeof filterOrType === 'object' && filterOrType !== null) {
-      filter = filterOrType;
-      gainVal = freqOrGain;
-    } else {
-      filter = this.ctx.createBiquadFilter();
-      filter.type = filterOrType;
-      filter.frequency.value = freqOrGain;
-      filter.Q.value = q;
-      gainVal = gain0;
-    }
+  _makeNoise(seconds = 2) {
+    const len = this.ctx.sampleRate * seconds;
+    const buf = this.ctx.createBuffer(1, len, this.ctx.sampleRate);
+    const data = buf.getChannelData(0);
+    for (let i = 0; i < len; i++) data[i] = Math.random() * 2 - 1;
+    return buf;
+  }
+
+  /** helper: looping noise source through a filter node into a gain */
+  _noiseChannel(filter, gainVal) {
     const src = this.ctx.createBufferSource();
     src.buffer = this.noiseBuffer;
     src.loop = true;
@@ -143,33 +236,89 @@ export class GameAudio {
   update(dt, p) {
     if (!this.started || !this.available) return;
     const t = this.ctx.currentTime;
+    this._t += dt;
 
     // resume after iOS interruptions
     if (this.ctx.state === 'suspended') {
       this.ctx.resume().catch(() => {});
     }
 
-    // firing frequency of a 4-stroke four: rpm / 60 * 2
-    const base = Math.max(18, (p.rpm / 60) * 2);
-    const revving = p.throttle > 0.02 && Math.abs(p.rpmNorm) > 0;
-    const load = 0.4 + p.throttle * 0.6;
+    // V10 four-stroke firing frequency: rpm/60 * 5 cylinders fire per rev
+    const f = Math.max(20, (p.rpm / 60) * 5);
+    const rn = Math.min(1, Math.max(0, p.rpmNorm));
+    const thr = Math.min(1, Math.max(0, p.throttle));
+    const load = 0.35 + thr * 0.65;
 
-    this.osc1.frequency.setTargetAtTime(base, t, 0.03);
-    this.osc2.frequency.setTargetAtTime(base * 2, t, 0.03);
-    this.osc3.frequency.setTargetAtTime(base * 3.02, t, 0.03);
-    this.engineFilter.frequency.setTargetAtTime(
-      300 + p.throttle * 900 + p.rpmNorm * 1400, t, 0.05
+    // layer frequencies (slight detune on the scream keeps it alive)
+    this.oscA.frequency.setTargetAtTime(f, t, 0.02);
+    this.oscB.frequency.setTargetAtTime(f * 0.5, t, 0.02);
+    this.oscC.frequency.setTargetAtTime(f * 2, t, 0.02);
+    this.oscD.frequency.setTargetAtTime(f * 1.5 + 1.5, t, 0.02);
+    this.roarBP.frequency.setTargetAtTime(Math.min(3800, f * 2.2), t, 0.03);
+
+    // timbre shaping with revs + load
+    this.formant.frequency.setTargetAtTime(135 + rn * 230, t, 0.05);
+    this.screamHP.frequency.setTargetAtTime(600 + rn * 1500, t, 0.05);
+    this.gainC.gain.setTargetAtTime(0.05 + 0.26 * Math.pow(rn, 1.7), t, 0.05);
+    this.gainB.gain.setTargetAtTime(
+      Math.min(0.4, Math.max(0.10, 0.34 * (1.25 - rn))), t, 0.05
     );
-    const engineVol = (0.05 + p.throttle * 0.075 + p.rpmNorm * 0.06 +
-      (p.reversing ? 0.02 : 0)) * this.engineVolume;
-    this.engineGain.gain.setTargetAtTime(
-      engineVol * (p.limiter ? 0.6 + 0.4 * Math.sin(t * 55) : 1), t, 0.06
+    this.gainRoar.gain.setTargetAtTime(0.08 + 0.20 * thr * (0.4 + 0.6 * rn), t, 0.05);
+    this.engineLP.frequency.setTargetAtTime(
+      380 + thr * 2000 + rn * 2400, t, 0.05
     );
 
-    this.windGain.gain.setTargetAtTime(p.speedN * p.speedN * 0.16 * load, t, 0.12);
+    // master engine loudness (burble at low revs, limiter chop at redline)
+    let vol = 0.10 + thr * 0.14 + rn * 0.11 + (p.launching ? 0.03 : 0);
+    if (rn < 0.22) {
+      const burble =
+        0.86 + 0.10 * Math.sin(this._t * 11.3) + 0.06 * Math.sin(this._t * 17.7);
+      vol *= Math.max(0.62, burble);
+    }
+    if (p.limiter) vol *= 0.55 + 0.45 * Math.sin(t * 55);
+    vol *= this.engineVolume;
+    this.engineGain.gain.setTargetAtTime(vol, t, 0.05);
+
+    // exhaust crackles on hard lift-off at high revs
+    if (this._lastThrottle > 0.45 && thr < 0.12 && rn > 0.42) {
+      this._crackleBurst(2 + Math.floor(Math.random() * 4));
+    }
+    this._lastThrottle = thr;
+
+    // environment layers
+    this.intakeGain.gain.setTargetAtTime(thr * thr * rn * 0.07, t, 0.06);
+    this.windGain.gain.setTargetAtTime(p.speedN * p.speedN * 0.22 * load, t, 0.10);
+    this.windFilter.frequency.setTargetAtTime(420 + p.speedN * 700, t, 0.1);
+    this.cabinGain.gain.setTargetAtTime(
+      p.speedN * p.speedN * 0.10 + (p.onCurb ? 0.06 : 0), t, 0.08
+    );
     const screech = Math.min(1, Math.max(0, (p.slip - 3) / 7)) * (p.onGrass ? 0.06 : 0.24);
     this.screechGain.gain.setTargetAtTime(screech, t, 0.05);
-    this.rumbleGain.gain.setTargetAtTime(p.onCurb ? 0.16 + p.speedN * 0.12 : 0, t, 0.05);
+  }
+
+  /** randomized exhaust crackle burst (lift-off / downshift) */
+  _crackleBurst(count) {
+    if (!this.started || !this.available || this.muted) return;
+    try {
+      const t0 = this.ctx.currentTime;
+      for (let i = 0; i < count; i++) {
+        const at = t0 + i * (0.025 + Math.random() * 0.07);
+        const src = this.ctx.createBufferSource();
+        src.buffer = this.noiseBuffer;
+        src.loop = true;
+        const bp = this.ctx.createBiquadFilter();
+        bp.type = 'bandpass';
+        bp.frequency.value = 650 + Math.random() * 1200;
+        bp.Q.value = 1.6 + Math.random();
+        const g = this.ctx.createGain();
+        const peak = 0.05 + Math.random() * 0.10;
+        g.gain.setValueAtTime(peak, at);
+        g.gain.exponentialRampToValueAtTime(0.0001, at + 0.045 + Math.random() * 0.07);
+        src.connect(bp); bp.connect(g); g.connect(this.master);
+        src.start(at);
+        src.stop(at + 0.22);
+      }
+    } catch { /* audio must never crash the game */ }
   }
 
   /** short beep used by the countdown / lap dings */
@@ -191,32 +340,31 @@ export class GameAudio {
     } catch { /* audio must never crash the game */ }
   }
 
-  /** mechanical shift clack + brief throttle blip */
+  /** mechanical shift clack + pressure release; downshifts also crackle */
   shiftBlip(isUpshift) {
     if (!this.started || !this.available || this.muted) return;
     try {
       const t = this.ctx.currentTime;
-      // short filtered noise burst = "clack"
       const src = this.ctx.createBufferSource();
       src.buffer = this.noiseBuffer;
       src.loop = true;
       const bp = this.ctx.createBiquadFilter();
       bp.type = 'bandpass';
-      bp.frequency.value = 2400;
-      bp.Q.value = 1.4;
+      bp.frequency.setValueAtTime(isUpshift ? 2800 : 1900, t);
+      bp.frequency.exponentialRampToValueAtTime(isUpshift ? 1500 : 900, t + 0.12);
+      bp.Q.value = 1.3;
       const g = this.ctx.createGain();
-      g.gain.setValueAtTime(0.12, t);
-      g.gain.exponentialRampToValueAtTime(0.0001, t + 0.09);
+      g.gain.setValueAtTime(0.13, t);
+      g.gain.exponentialRampToValueAtTime(0.0001, t + 0.11);
       src.connect(bp); bp.connect(g); g.connect(this.master);
       src.start(t);
-      src.stop(t + 0.12);
-      // pressure-release whoosh on upshifts
-      if (isUpshift) this.beep(190, 0.07, 0.05, 'sawtooth');
+      src.stop(t + 0.15);
+      if (isUpshift) this.beep(210, 0.06, 0.05, 'sawtooth');
+      else this._crackleBurst(2);
     } catch { /* ignore */ }
   }
 
   countdownBeep(step) {
-    // step: 3, 2, 1 -> low; GO -> high
     if (step === 'GO') this.beep(880, 0.5, 0.26);
     else this.beep(440, 0.16, 0.2);
   }

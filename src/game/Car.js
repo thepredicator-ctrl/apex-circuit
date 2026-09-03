@@ -1,24 +1,26 @@
 /**
- * Car — detailed low-poly GT racing car, fully procedural (no external assets).
+ * Car — Audi-inspired GT racing car, fully procedural (no external assets).
  *
  * The model is authored with the nose along +X inside `model` (wrapped -90°
  * about Y so the nose points at +Z world). `body` carries the hull + interior
  * and receives suspension roll/pitch/bounce; the four wheel assemblies hang
  * off `model` directly so they track the road while the body leans.
  *
- * Exterior: sculpted hull, front/rear bumpers with intake & diffuser, hood
- * bulge, side skirts, doors with seams + handles, mirrors, big racing wing
- * with endplates, quad exhaust tips, headlight lenses, full-width tail bar,
- * turn indicators, splitter.
- * Interior: dash with live canvas instrument cluster, steering wheel that
- * rotates with input, animated gear shifter, pedals, bucket seats, tunnel,
- * handbrake, mirror — everything the cockpit camera needs.
+ * Exterior: sculpted hull, Audi singleframe grille + four-rings badges,
+ * front/rear bumpers with intake & diffuser, hood bulge, side skirts, doors,
+ * mirrors, big racing wing with endplates, quad exhaust tips, LED lights,
+ * and proper wheel arches: body-coloured flares + dark wheel-well liners so
+ * the tires never visually intersect the painted bodywork.
+ * Interior (Interior.js): Audi RS/R8-style cockpit — high-poly flat-bottom
+ * steering wheel with four-rings hub + paddles, live Virtual Cockpit display,
+ * MMI touchscreen minimap, RS bucket seats, aluminum pedals, ambient light.
  * Wheels: tire / 5-spoke rim / brake disc (spins) / caliper (steers, not spin).
  */
 
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { CAR, SUSPENSION } from './Constants.js';
+import { buildInterior, drawCluster, drawMMI } from './Interior.js';
 
 function extrudeShape(points, depth, bevel) {
   const shape = new THREE.Shape();
@@ -44,7 +46,9 @@ function box(w, h, d, x, y, z) {
 }
 
 export class Car {
-  constructor() {
+  constructor(track = null) {
+    this.track = track;
+
     this.group = new THREE.Group();      // world transform (position + heading)
     this.model = new THREE.Group();      // static wrap: nose +X -> +Z
     this.model.rotation.y = -Math.PI / 2;
@@ -55,17 +59,12 @@ export class Car {
 
     this._buildMaterials();
     this._buildExterior();
-    this._buildInterior();
-    this._buildCluster();
+    this._buildArches();
     this._buildWheels();
 
-    // cockpit eye anchor (lives on body so it follows suspension)
-    // body space: +X nose, +Y up, +Z car-left (driver side)
-    this.cockpitAnchor = new THREE.Object3D();
-    this.cockpitAnchor.position.set(-0.55, 1.03, 0.325);
-    this.body.add(this.cockpitAnchor);
-
-    this.helmet = this._buildDriver();
+    // Audi RS/R8 cockpit: dash, screens, high-poly steering wheel, seats,
+    // pedals, driver — sets cockpitAnchor / steering refs / helmet too.
+    buildInterior(this);
 
     this._prevVF = 0;
     this._spinAngle = 0;
@@ -146,6 +145,10 @@ export class Car {
       }),
       helmetVisor: new THREE.MeshStandardMaterial({
         color: 0x101418, metalness: 0.8, roughness: 0.15
+      }),
+      well: new THREE.MeshStandardMaterial({
+        color: 0x0b0c0e, roughness: 0.95, metalness: 0.05,
+        side: THREE.DoubleSide
       })
     };
   }
@@ -162,17 +165,6 @@ export class Car {
       [-1.97, 0.94], [-2.2, 0.8], [-2.24, 0.44], [-2.16, 0.17],
       [-1.0, 0.13], [1.0, 0.13]
     ], 1.48, 0.05));
-
-    // fender volumes widen the body over the wheels
-    for (const [fx, fz] of [[1.48, 0.72], [1.48, -0.72], [-1.48, 0.72], [-1.48, -0.72]]) {
-      const g = extrudeShape([
-        [fx + 0.78, 0.3], [fx + 0.86, 0.52], [fx + 0.6, 0.68],
-        [fx - 0.6, 0.68], [fx - 0.86, 0.5], [fx - 0.78, 0.3]
-      ], 0.46, 0.05);
-      g.translate(0, 0, fz > 0 ? fz - 0.23 : fz + 0.23);
-      // keep the arches from poking through the nose/tail
-      paint.push(g);
-    }
 
     // hood power bulge
     paint.push(box(0.9, 0.05, 0.62, 1.45, 0.775, 0));
@@ -197,14 +189,11 @@ export class Car {
     trim.push(box(0.26, 0.4, 1.76, -2.24, 0.36, 0));
     trim.push(box(0.3, 0.16, 1.66, -2.26, 0.2, 0));
     for (let i = -3; i <= 3; i++) {
-      const fin = box(0.3, 0.16, 0.03, -2.24, 0.18, i * 0.22);
-      fin.rotateZ ? fin.rotateZ(0) : null;
-      trim.push(fin);
+      trim.push(box(0.3, 0.16, 0.03, -2.24, 0.18, i * 0.22));
     }
 
     // racing wing: blade, endplates, stanchions
-    const blade = box(0.4, 0.045, 1.86, -2.06, 1.13, 0);
-    trim.push(blade);
+    trim.push(box(0.4, 0.045, 1.86, -2.06, 1.13, 0));
     trim.push(box(0.06, 0.24, 0.3, -2.06, 1.06, 0.93));
     trim.push(box(0.06, 0.24, 0.3, -2.06, 1.06, -0.93));
     trim.push(box(0.16, 0.26, 0.05, -1.98, 0.98, 0.5));
@@ -218,12 +207,19 @@ export class Car {
       [1.0, 0.755], [0.24, 1.17], [-0.56, 1.225], [-1.3, 1.045],
       [-1.34, 0.83], [-0.5, 0.75]
     ], 1.56, 0.03));
+    // opaque dark side-glass panels just outside the hull wall — from the
+    // cabin they read as tinted windows instead of showing the red hull side
+    gloss.push(box(1.9, 0.30, 0.03, -0.45, 0.99, 0.752));
+    gloss.push(box(1.9, 0.30, 0.03, -0.45, 0.99, -0.752));
+    // cowl side panels (inside the hull, visible only from the cabin —
+    // block the red fender tops past the dash edges)
+    gloss.push(box(0.95, 0.22, 0.03, 1.02, 0.91, 0.72));
+    gloss.push(box(0.95, 0.22, 0.03, 1.02, 0.91, -0.72));
 
     // mirrors
     for (const side of [1, -1]) {
       trim.push(box(0.05, 0.03, 0.14, 0.78, 0.86, side * 0.82));
-      const shell = box(0.12, 0.09, 0.16, 0.76, 0.9, side * 0.95);
-      paint.push(shell);
+      paint.push(box(0.10, 0.07, 0.13, 0.76, 0.9, side * 0.95));
       trim.push(box(0.02, 0.07, 0.12, 0.695, 0.9, side * 0.95));
     }
 
@@ -239,11 +235,8 @@ export class Car {
 
     // lights
     for (const side of [-1, 1]) {
-      // headlight housing + lens
       trim.push(box(0.1, 0.13, 0.34, 2.18, 0.56, side * 0.6));
       gloss.push(box(0.04, 0.1, 0.28, 2.235, 0.56, side * 0.6));
-      // tail light bar handled below (full width)
-      // indicators
       gloss.push(box(0.03, 0.06, 0.1, 2.24, 0.4, side * 0.8));
       gloss.push(box(0.03, 0.06, 0.1, -2.3, 0.52, side * 0.84));
     }
@@ -251,14 +244,79 @@ export class Car {
     gloss.push(box(0.04, 0.09, 1.6, -2.345, 0.68, 0));
     gloss.push(box(0.03, 0.06, 0.14, -2.34, 0.4, 0));
 
+    // --- Audi singleframe grille + four rings badges -------------------------
+    gloss.push(box(0.03, 0.05, 0.74, 2.30, 0.665, 0));      // top bar
+    gloss.push(box(0.03, 0.05, 0.74, 2.30, 0.415, 0));      // bottom bar
+    gloss.push(box(0.03, 0.30, 0.05, 2.30, 0.54, 0.355));   // right post
+    gloss.push(box(0.03, 0.30, 0.05, 2.30, 0.54, -0.355));  // left post
+    trim.push(box(0.02, 0.22, 0.68, 2.285, 0.54, 0));       // grille insert
+
+    const ringsF = [], ringsR = [];
+    for (let i = 0; i < 4; i++) {
+      const rf = new THREE.TorusGeometry(0.034, 0.005, 8, 24);
+      rf.rotateY(Math.PI / 2);
+      rf.translate(2.30, 0.745, (i - 1.5) * 0.052);
+      ringsF.push(rf);
+      const rr = new THREE.TorusGeometry(0.026, 0.0045, 8, 24);
+      rr.rotateY(Math.PI / 2);
+      rr.translate(-2.30, 0.585, (i - 1.5) * 0.040);
+      ringsR.push(rr);
+    }
+    this.body.add(new THREE.Mesh(mergeGeometries(ringsF.map((g) => g.toNonIndexed()), false), M.chrome));
+    this.body.add(new THREE.Mesh(mergeGeometries(ringsR.map((g) => g.toNonIndexed()), false), M.chrome));
+
     this._addMeshes(paint, M.paint, true, true);
     this._addMeshes(trim, M.blackMatte, true, false);
     this._addMeshes(gloss, M.blackGloss, true, false);
     this._addMeshes(glass, M.glass, false, false);
   }
 
+  /**
+   * Wheel arches: body-coloured flares wrapped over each wheel + dark
+   * wheel-well liners. The liner hides the hull side wall behind the tire so
+   * the tire can never look like it is overlapping/bleeding into the body.
+   */
+  _buildArches() {
+    const M = this.mats;
+    const R = CAR.wheelRadius;
+    const archOuter = R + 0.20;   // capped so the flare stays below the window sill
+    const archInner = R + 0.065;
+    const flare = [], liners = [];
+
+    for (const [cx, cz] of [[1.48, 0.82], [1.48, -0.82], [-1.48, 0.82], [-1.48, -0.82]]) {
+      // flare: annulus sector over the top of the wheel, extruded across it.
+      // The extrude starts AT the hull side wall (z = ±0.74) and goes outward
+      // so no flare surface pokes into the cabin (visible through windows).
+      const shape = new THREE.Shape();
+      const a0 = THREE.MathUtils.degToRad(8);
+      const a1 = Math.PI - a0;
+      shape.absarc(0, 0, archOuter, a0, a1, false);
+      shape.absarc(0, 0, archInner, a1, a0, true);
+      shape.closePath();
+      const g = new THREE.ExtrudeGeometry(shape, {
+        depth: 0.34, bevelEnabled: true,
+        bevelThickness: 0.025, bevelSize: 0.02, bevelSegments: 2,
+        curveSegments: 26
+      });
+      g.translate(0, R, cz > 0 ? 0.74 : -1.08);
+      flare.push(g);
+
+      // dark well liner: open half-cylinder over the top of the tire
+      const lg = new THREE.CylinderGeometry(
+        R + 0.055, R + 0.055, 0.34, 16, 1, true, Math.PI / 2, Math.PI
+      );
+      lg.rotateX(Math.PI / 2);
+      lg.translate(cx, R, cz + Math.sign(cz) * 0.07);
+      liners.push(lg);
+    }
+
+    this._addMeshes(flare, M.paint, true, false);
+    const linerMesh = new THREE.Mesh(mergeGeometries(liners.map((g) => g.toNonIndexed()), false), M.well);
+    this.body.add(linerMesh);
+  }
+
   _addMeshes(geos, mat, castShadow, receive) {
-    if (!geos.length) return;
+    if (!geos.length) return null;
     // ExtrudeGeometry is non-indexed while primitives are indexed —
     // normalize everything so mergeGeometries never refuses the batch
     const normalized = geos.map((g) => (g.index ? g.toNonIndexed() : g));
@@ -267,251 +325,7 @@ export class Car {
     mesh.castShadow = castShadow;
     mesh.receiveShadow = false;
     this.body.add(mesh);
-  }
-
-  // -------------------------------------------------------------- interior
-  _buildInterior() {
-    const M = this.mats;
-    const dark = [], soft = [];
-
-    // tub: floor, tunnel, rear bulkhead, footwells
-    dark.push(box(2.2, 0.06, 1.4, -0.2, 0.2, 0));
-    dark.push(box(1.9, 0.3, 0.26, -0.25, 0.36, 0));          // tunnel
-    dark.push(box(0.06, 0.62, 1.4, -1.28, 0.55, 0));         // bulkhead
-    dark.push(box(0.7, 0.5, 1.42, 0.72, 0.42, 0));           // dash block
-    dark.push(box(0.16, 0.6, 1.42, 0.42, 0.55, 0));          // dash face
-    // dash top pad
-    soft.push(box(0.3, 0.05, 1.42, 0.56, 0.845, 0));
-    // door cards
-    for (const s of [1, -1]) {
-      dark.push(box(1.7, 0.5, 0.05, -0.35, 0.5, s * 0.72));
-      soft.push(box(1.5, 0.08, 0.09, -0.35, 0.62, s * 0.7));  // armrest
-    }
-    // roof lining
-    soft.push(box(1.4, 0.04, 1.3, -0.4, 1.17, 0));
-
-    // bucket seats (driver z +0.33, passenger z -0.33)
-    for (const z of [0.33, -0.33]) {
-      soft.push(box(0.5, 0.12, 0.52, -0.55, 0.32, z));        // cushion
-      const back = box(0.14, 0.62, 0.5, -0.85, 0.68, z);
-      soft.push(back);
-      soft.push(box(0.12, 0.2, 0.3, -0.86, 1.06, z));         // headrest
-      dark.push(box(0.02, 0.56, 0.36, -0.77, 0.68, z));       // accent panel
-    }
-
-    // pedals (throttle + brake) — visible looking down from the seat
-    this.pedalThrottle = new THREE.Mesh(new THREE.BoxGeometry(0.03, 0.14, 0.07), M.interiorSoft);
-    this.pedalThrottle.position.set(0.98, 0.33, 0.4);
-    this.pedalThrottle.rotation.z = -0.35;
-    this.body.add(this.pedalThrottle);
-    this.pedalBrake = new THREE.Mesh(new THREE.BoxGeometry(0.03, 0.16, 0.09), M.interiorSoft);
-    this.pedalBrake.position.set(0.98, 0.36, 0.26);
-    this.pedalBrake.rotation.z = -0.35;
-    this.body.add(this.pedalBrake);
-
-    // handbrake lever
-    const hbBase = new THREE.Mesh(new THREE.BoxGeometry(0.22, 0.05, 0.06), M.interior);
-    hbBase.position.set(-0.05, 0.52, 0.16);
-    this.body.add(hbBase);
-    this.handbrakeLever = new THREE.Mesh(new THREE.CylinderGeometry(0.018, 0.022, 0.26, 6), M.interiorSoft);
-    this.handbrakeLever.position.set(-0.14, 0.63, 0.16);
-    this.handbrakeLever.rotation.z = 0.9;
-    this.body.add(this.handbrakeLever);
-
-    // center screen (small infotainment, faces driver)
-    const screen = new THREE.Mesh(
-      new THREE.PlaneGeometry(0.24, 0.13),
-      new THREE.MeshStandardMaterial({ color: 0x0a2a3a, emissive: 0x0d3a52, emissiveIntensity: 0.7 })
-    );
-    screen.position.set(0.42, 0.82, 0.05);
-    screen.rotation.y = Math.PI / 2 + 0.18;
-    screen.rotation.x = -0.1;
-    this.body.add(screen);
-
-    this._addMeshes(dark, M.interior, false, false);
-    this._addMeshes(soft, M.interiorSoft, false, false);
-
-    // ---- steering wheel (rotates with input) --------------------------------
-    this.steeringTilt = new THREE.Group();
-    this.steeringTilt.position.set(0.58, 0.85, 0.33);
-    this.steeringTilt.rotation.z = -0.42;   // column rake
-    this.body.add(this.steeringTilt);
-
-    this.steeringSpin = new THREE.Group();
-    this.steeringTilt.add(this.steeringSpin);
-
-    const rimGeo = new THREE.TorusGeometry(0.155, 0.027, 8, 20);
-    rimGeo.rotateY(Math.PI / 2);
-    const rim = new THREE.Mesh(rimGeo, M.interiorSoft);
-    this.steeringSpin.add(rim);
-
-    const spokes = [];
-    spokes.push(box(0.02, 0.03, 0.3, 0, 0, 0));       // horizontal
-    spokes.push(box(0.02, 0.15, 0.03, 0, -0.07, 0));  // lower stem
-    const spokeMesh = new THREE.Mesh(mergeGeometries(spokes, false), M.interiorSoft);
-    this.steeringSpin.add(spokeMesh);
-    const hub = new THREE.Mesh(new THREE.CylinderGeometry(0.045, 0.05, 0.04, 10).rotateZ(Math.PI / 2), M.accent);
-    this.steeringSpin.add(hub);
-    // top-center marker
-    const marker = new THREE.Mesh(new THREE.BoxGeometry(0.022, 0.02, 0.05), M.accent);
-    marker.position.set(0, 0.145, 0);
-    this.steeringSpin.add(marker);
-    // column
-    const column = new THREE.Mesh(new THREE.CylinderGeometry(0.035, 0.045, 0.3, 8).rotateZ(Math.PI / 2), M.interior);
-    column.position.set(0.14, 0.04, 0);
-    this.steeringTilt.add(column);
-
-    // ---- gear shifter (animates) --------------------------------------------
-    this.shifterGroup = new THREE.Group();
-    this.shifterGroup.position.set(-0.1, 0.5, 0.02);
-    this.body.add(this.shifterGroup);
-    const boot = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.075, 0.09, 8), M.interior);
-    boot.position.y = 0.03;
-    this.shifterGroup.add(boot);
-    const lever = new THREE.Mesh(new THREE.CylinderGeometry(0.014, 0.018, 0.24, 6), M.interiorSoft);
-    lever.position.y = 0.17;
-    this.shifterGroup.add(lever);
-    const knob = new THREE.Mesh(new THREE.SphereGeometry(0.036, 10, 8), M.accent);
-    knob.position.y = 0.3;
-    this.shifterGroup.add(knob);
-
-    // interior mirror
-    const imirror = new THREE.Mesh(new THREE.BoxGeometry(0.03, 0.07, 0.26), M.blackGloss);
-    imirror.position.set(0.7, 1.08, 0);
-    this.body.add(imirror);
-  }
-
-  // ------------------------------------------------- instrument cluster
-  _buildCluster() {
-    const cv = document.createElement('canvas');
-    cv.width = 256;
-    cv.height = 128;
-    this._clusterCanvas = cv;
-    this._clusterCtx = cv.getContext('2d');
-    this._clusterTex = new THREE.CanvasTexture(cv);
-    this._clusterTex.colorSpace = THREE.SRGBColorSpace;
-    this._clusterTex.anisotropy = 4;
-
-    this._drawCluster(0, 0, '0', 'N', false);
-
-    const mat = new THREE.MeshBasicMaterial({ map: this._clusterTex, toneMapped: false });
-    const pod = new THREE.Mesh(new THREE.BoxGeometry(0.03, 0.22, 0.38), this.mats.interior);
-    pod.position.set(0.83, 0.92, 0.33);
-    this.body.add(pod);
-    const face = new THREE.Mesh(new THREE.PlaneGeometry(0.34, 0.18), mat);
-    face.position.set(0.808, 0.93, 0.33);
-    face.rotation.y = -Math.PI / 2; // normal toward -X (driver side)
-    this.body.add(face);
-    // small hood/binnacle over the cluster
-    const binnacle = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.03, 0.4), this.mats.interiorSoft);
-    binnacle.position.set(0.85, 1.03, 0.33);
-    binnacle.rotation.z = 0.3;
-    this.body.add(binnacle);
-  }
-
-  /** Redraw the 3D dash cluster (called ~25 Hz from Game). */
-  _drawCluster(rpmNorm, speedKmh, gearLabel, limiter) {
-    const ctx = this._clusterCtx;
-    const w = 256, h = 128;
-    ctx.fillStyle = '#0a0c10';
-    ctx.fillRect(0, 0, w, h);
-
-    // --- tach dial (left) ---
-    const cx = 62, cy = 66, r = 48;
-    const a0 = Math.PI * 0.75, a1 = Math.PI * 2.25;
-    ctx.lineWidth = 8;
-    ctx.strokeStyle = '#232a33';
-    ctx.beginPath();
-    ctx.arc(cx, cy, r, a0, a1);
-    ctx.stroke();
-    // redline zone
-    ctx.strokeStyle = '#d8342a';
-    ctx.beginPath();
-    ctx.arc(cx, cy, r, a0 + (a1 - a0) * 0.88, a1);
-    ctx.stroke();
-    // active arc
-    const warn = rpmNorm > 0.88;
-    ctx.strokeStyle = limiter || warn ? '#ff5040' : '#35e0ff';
-    ctx.lineWidth = 8;
-    ctx.beginPath();
-    ctx.arc(cx, cy, r, a0, a0 + (a1 - a0) * Math.min(1, rpmNorm));
-    ctx.stroke();
-    // ticks
-    ctx.lineWidth = 2;
-    ctx.strokeStyle = '#5a6572';
-    for (let i = 0; i <= 8; i++) {
-      const a = a0 + (a1 - a0) * (i / 8);
-      ctx.beginPath();
-      ctx.moveTo(cx + Math.cos(a) * (r - 12), cy + Math.sin(a) * (r - 12));
-      ctx.lineTo(cx + Math.cos(a) * r, cy + Math.sin(a) * r);
-      ctx.stroke();
-    }
-    // needle
-    const na = a0 + (a1 - a0) * Math.min(1, rpmNorm);
-    ctx.strokeStyle = '#f2f6fa';
-    ctx.lineWidth = 3;
-    ctx.beginPath();
-    ctx.moveTo(cx - Math.cos(na) * 8, cy - Math.sin(na) * 8);
-    ctx.lineTo(cx + Math.cos(na) * (r - 10), cy + Math.sin(na) * (r - 10));
-    ctx.stroke();
-    ctx.fillStyle = '#f2f6fa';
-    ctx.beginPath();
-    ctx.arc(cx, cy, 5, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.fillStyle = '#8b96a3';
-    ctx.font = '600 11px system-ui, sans-serif';
-    ctx.textAlign = 'center';
-    ctx.fillText('RPM x1000', cx, cy + 26);
-
-    // --- digital speed + gear (right) ---
-    ctx.fillStyle = '#f2f6fa';
-    ctx.font = '900 44px system-ui, sans-serif';
-    ctx.textAlign = 'right';
-    ctx.fillText(String(Math.round(speedKmh)), 218, 66);
-    ctx.font = '600 12px system-ui, sans-serif';
-    ctx.fillStyle = '#8b96a3';
-    ctx.textAlign = 'left';
-    ctx.fillText('KM/H', 224, 66);
-    // gear box
-    ctx.fillStyle = gearLabel === 'R' ? '#ff9d14' : '#d8342a';
-    ctx.fillRect(170, 78, 36, 36);
-    ctx.fillStyle = '#ffffff';
-    ctx.font = '900 26px system-ui, sans-serif';
-    ctx.textAlign = 'center';
-    ctx.fillText(gearLabel, 188, 106);
-    // shift light strip
-    const lit = Math.min(5, Math.floor(rpmNorm * 6));
-    for (let i = 0; i < 5; i++) {
-      ctx.fillStyle = i < lit ? (i >= 4 ? '#ff5040' : '#3ddc84') : '#1c222b';
-      ctx.fillRect(12 + i * 16, 8, 12, 8);
-    }
-
-    this._clusterTex.needsUpdate = true;
-  }
-
-  updateCluster(rpmNorm, speedKmh, gearLabel, limiter) {
-    this._drawCluster(rpmNorm, speedKmh, gearLabel, limiter);
-  }
-
-  // ------------------------------------------------------------- driver
-  _buildDriver() {
-    const g = new THREE.Group();
-    const helmet = new THREE.Mesh(new THREE.SphereGeometry(0.125, 12, 9), this.mats.helmet);
-    helmet.position.set(-0.72, 1.02, 0.33);
-    g.add(helmet);
-    const visor = new THREE.Mesh(
-      new THREE.SphereGeometry(0.127, 12, 6, 0.6, 1.9, 1.1, 0.7),
-      this.mats.helmetVisor
-    );
-    visor.position.set(-0.72, 1.02, 0.33);
-    visor.rotation.y = Math.PI / 2;
-    g.add(visor);
-    const shoulders = new THREE.Mesh(new THREE.BoxGeometry(0.3, 0.16, 0.44), this.mats.interiorSoft);
-    shoulders.position.set(-0.88, 0.82, 0.33);
-    g.add(shoulders);
-    g.traverse((o) => { if (o.isMesh) o.castShadow = false; });
-    this.body.add(g);
-    return g;
+    return mesh;
   }
 
   // -------------------------------------------------------------- wheels
@@ -521,28 +335,26 @@ export class Car {
 
     // tire: cylinder + shoulder tori
     // (wheel axle is model Z: cylinder rotated Y->Z; tori keep their default
-    //  Z axis so they lie flat in the wheel plane — rotating them would stand
-    //  them perpendicular to the tire like a gyroscope hoop)
-    const tireGeo = new THREE.CylinderGeometry(R, R, 0.27, 20);
+    //  Z axis so they lie flat in the wheel plane)
+    const tireGeo = new THREE.CylinderGeometry(R, R, 0.27, 24);
     tireGeo.rotateX(Math.PI / 2);
-    const shoulderGeo = new THREE.TorusGeometry(R - 0.012, 0.024, 6, 20);
+    const shoulderGeo = new THREE.TorusGeometry(R - 0.012, 0.024, 8, 24);
 
     // rim: outer ring + hub + 5 spokes (merged) — all in the XY wheel plane
     const rimParts = [];
-    const ring = new THREE.TorusGeometry(0.195, 0.03, 6, 18);   // default axis Z = axle
-    rimParts.push(ring);
-    const hub = new THREE.CylinderGeometry(0.062, 0.062, 0.24, 10);
+    rimParts.push(new THREE.TorusGeometry(0.195, 0.03, 8, 24));
+    const hub = new THREE.CylinderGeometry(0.062, 0.062, 0.24, 12);
     hub.rotateX(Math.PI / 2);
     rimParts.push(hub);
     for (let i = 0; i < 5; i++) {
       const a = (i / 5) * Math.PI * 2;
       const spoke = new THREE.BoxGeometry(0.03, 0.3, 0.05);
-      spoke.rotateZ(a);            // fan spokes within the wheel plane
+      spoke.rotateZ(a);
       rimParts.push(spoke);
     }
     const rimGeo = mergeGeometries(rimParts, false);
 
-    const discGeo = new THREE.CylinderGeometry(0.15, 0.15, 0.028, 16);
+    const discGeo = new THREE.CylinderGeometry(0.15, 0.15, 0.028, 18);
     discGeo.rotateX(Math.PI / 2);
     const caliperGeo = box(0.1, 0.16, 0.05, 0, 0.02, 0);
 
@@ -669,21 +481,28 @@ export class Car {
     this._indicatorT += dt;
     const blinkOn = Math.sin(this._indicatorT * 7) > 0;
     const steerNorm = phys.steerAngle / 0.5;
-    const leftBlink = steerNorm < -0.3 && blinkOn;
-    const rightBlink = steerNorm > 0.3 && blinkOn;
-    // indicators share one material; swap emissive per direction
-    this.mats.indicator.emissiveIntensity = (leftBlink || rightBlink) ? 3.2 : 0.15;
-    // (per-side glow: shift the material color slightly so both sides pulse
-    // together — separate materials would double draw calls for little gain)
+    const blink = (steerNorm < -0.3 || steerNorm > 0.3) && blinkOn;
+    this.mats.indicator.emissiveIntensity = blink ? 3.2 : 0.15;
+
+    // ---- ambient light line: slow breathing pulse ----------------------------
+    if (this.mats.ambient) {
+      this.mats.ambient.emissiveIntensity = 1.5 + Math.sin(this._time * 2.1) * 0.35;
+    }
 
     // ---- cockpit visibility -------------------------------------------------
     this.helmet.visible = !this.cockpitMode;
 
-    // ---- live cluster (~25 Hz) ------------------------------------------------
+    // ---- live Virtual Cockpit (~20 Hz) ----------------------------------------
     this._clusterAcc += dt;
-    if (this._clusterAcc > 0.04) {
+    if (this._clusterAcc > 0.05) {
       this._clusterAcc = 0;
-      this.updateCluster(trans.rpmNorm, phys.speedKmh, trans.gearLabel, trans.limiterCut);
+      drawCluster(this, trans.rpmNorm, phys.speedKmh, trans.gearLabel, trans.limiterCut);
+    }
+    // ---- MMI minimap (~4 Hz) ---------------------------------------------------
+    this._mmiAcc += dt;
+    if (this._mmiAcc > 0.25) {
+      this._mmiAcc = 0;
+      drawMMI(this, ((phys.s % 1) + 1) % 1);
     }
   }
 }

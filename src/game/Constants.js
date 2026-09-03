@@ -104,26 +104,29 @@ export const TRACK = {
 export const CAMERA = {
   // --- chase ---------------------------------------------------------------
   fovBase: 62,
-  fovSpeedBoost: 11,
+  fovSpeedBoost: 17,        // wide-angle rush at top speed (62 -> ~79)
   distanceBase: 7.2,
-  distanceSpeed: 3.6,
+  distanceSpeed: 2.7,       // pulls IN slightly less than before (tighter = faster feel)
   heightBase: 2.95,
-  heightSpeed: 0.75,
+  heightSpeed: 0.45,        // camera stays lower at speed
   posDamping: 5.0,
   lookDamping: 9.5,
   lookAhead: 8.5,
   rollMax: 0.05,
+  chaseShake: 0.05,         // m of high-speed camera vibration
   // velocity prediction: how far ahead of the *velocity vector* the rig aims
   velocityLead: 0.28,
-  accelLift: 0.55,         // camera rises back under acceleration (m)
-  brakeDive: 0.45,         // drops closer under braking (m)
+  accelLift: 0.55,          // camera rises back under acceleration (m)
+  brakeDive: 0.45,          // drops closer under braking (m)
   // --- cockpit -------------------------------------------------------------
-  cockpitFov: 68,
+  cockpitFov: 70,
+  cockpitFovBoost: 7,       // cockpit FOV also widens with speed
   cockpitPos: [-0.13, 1.06, 0.14], // local to car model space (nose=+Z)
   cockpitLookAhead: 30,
   cockpitDamping: 10,
-  cockpitAccelDip: 0.028,  // m of head travel per g
-  cockpitRollInfluence: 0.5
+  cockpitAccelDip: 0.028,   // m of head travel per g
+  cockpitRollInfluence: 0.5,
+  cockpitShake: 0.02        // cabin vibration amplitude
 };
 
 /** Graphics quality presets. */

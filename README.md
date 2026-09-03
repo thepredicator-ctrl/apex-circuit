@@ -1,26 +1,35 @@
 # Apex Circuit — 3D Arcade Racer
 
 A polished, lightweight 3D arcade racing game that runs in modern desktop and
-mobile/tablet browsers. Three laps, checkpoint validation, a real gearbox
-with manual / automatic modes, a first-person cockpit, weight-transfer
-physics, elevation + banked corners and large touch controls — built entirely
-with **HTML, CSS, JavaScript and [Three.js](https://threejs.org/)**, bundled
-by **Vite**. No external assets, no CDNs at runtime: every mesh, texture and
-sound is generated procedurally in code, and the production build bundles
-all dependencies into static files.
+mobile/tablet browsers — **play it live:
+https://thepredicator-ctrl.github.io/apex-circuit/** — featuring an
+Audi-inspired R8/RS-style cockpit, a real gearbox with manual / automatic
+modes, weight-transfer physics, elevation + banked corners and large touch
+controls. Built entirely with **HTML, CSS, JavaScript and
+[Three.js](https://threejs.org/)**, bundled by **Vite**. No external assets,
+no CDNs at runtime: every mesh, texture and sound is generated procedurally
+in code, and the production build bundles all dependencies into static files.
 
 ![Tech](https://img.shields.io/badge/Three.js-r182-049ef4) ![Vite](https://img.shields.io/badge/Vite-7-9575ff) ![License](https://img.shields.io/badge/license-MIT-green)
 
 ## Features
 
-- **Detailed procedural GT racer** — sculpted hull, front/rear bumpers with
-  intake & diffuser, hood bulge, side skirts, doors with seams and handles,
-  side mirrors, big racing wing with endplates, quad exhausts, headlight
-  lenses, full-width tail bar, turn indicators and a driver figure
-- **Full interior** — dashboard with a **live canvas instrument cluster**
-  (tachometer needle, digital speed, gear indicator), rotating steering
-  wheel, animated gear shifter, bucket seats, pedals, handbrake, door cards
-  and mirror
+- **Audi-inspired GT racer** (unofficial fan tribute) — sculpted hull with
+  proper **wheel arches: body-coloured flares + dark wheel-well liners** (no
+  tire clipping through the bodywork), singleframe-style grille with
+  **four-rings badges** front and rear, front/rear bumpers with intake &
+  diffuser, hood bulge, side skirts, doors with seams and handles, side
+  mirrors, big racing wing with endplates, quad exhausts, LED-look lights,
+  full-width tail bar and turn indicators
+- **Audi RS/R8-style cockpit** (LHD) — **high-poly flat-bottom sport
+  steering wheel** (extruded bevelled rim, four-rings hub, red 12 o'clock
+  stripe, button pods, aluminum **paddle shifters**) that rotates with your
+  input, a live **"Virtual Cockpit" widescreen instrument display** (Audi-red
+  tach arc, digital speed, gear, 7 shift LEDs), a center **MMI touchscreen
+  with a live minimap** drawn from the actual track spline (the car dot moves
+  in real time), RS bucket seats with red accents, aluminum sport pedals,
+  red ambient light strips, ENGINE START button, animated gear shifter and
+  handbrake
 - **Proper wheel assemblies** — tire, 5-spoke rim, brake disc and caliper per
   corner; front wheels steer, all wheels spin at exactly `v / r`, rear wheels
   flare on wheelspin, and every wheel moves independently on its suspension
@@ -54,15 +63,22 @@ all dependencies into static files.
   crossings and gate skips never count), finish screen with lap breakdown,
   best-lap persistence via `localStorage`
 - **Cameras** — chase camera with velocity prediction, accel/brake
-  reaction, corner swing, subtle roll, speed FOV and ground-clipping
-  protection; cockpit camera as above
+  reaction, corner swing, subtle roll, aggressive speed FOV (+17°),
+  high-speed camera shake and ground-clipping protection; cockpit camera
+  with speed FOV, head inertia and suspension motion — plus world-anchored
+  **speed-line streaks** that fade in above ~100 km/h for a real sense of
+  speed
 - **Settings menu** (Esc or the HUD button) — automatic/manual transmission,
   camera mode, graphics quality (LOW / MEDIUM / HIGH), master & engine
   volume, steering speed, camera smoothing — persisted via `localStorage`
-- **Procedural audio** (Web Audio API) — engine whose pitch tracks the real
-  RPM through a waveshaper, shift clacks/blips, tire screech, wind rush,
-  curb rumble, countdown beeps, lap dings, finish jingle. The game runs
-  silently if audio is unavailable
+- **Procedural V10-style audio** (Web Audio API) — four oscillator layers
+  (harmonic-rich fundamental, half-order sub rumble, double-frequency
+  scream, 1.5-order rasp) tracking the real firing frequency
+  `rpm/60 × 5`, shaped by a moving formant filter, combustion roar noise
+  locked to the firing rate, load-dependent lowpass, soft clipper and
+  compressor — plus **exhaust crackles on lift-off and downshifts**, idle
+  burble, intake hiss, shift clacks/blips, tire screech, wind rush, cabin
+  rumble and curb rumble. The game runs silently if audio is unavailable
 - **Racing HUD** — canvas tachometer with shift lights and big gear readout,
   lap counter with checkpoint pips, current lap / total / best times,
   transmission & camera badges, reset/restart/sound/settings buttons, lap
@@ -160,15 +176,16 @@ static host, because all asset paths are relative (`base: './'`):
     │   ├── Game.js         # engine orchestrator, fixed-step loop, settings
     │   ├── Track.js        # procedural circuit + elevation/banking + scenery
     │   ├── Environment.js  # sky shader, fog, lights, shadows, env probe
-    │   ├── Car.js          # detailed procedural car + interior + wheels
+    │   ├── Car.js          # detailed procedural car + wheel arches + wheels
+    │   ├── Interior.js     # Audi-style cockpit, steering wheel, live screens
     │   ├── Physics.js      # weight-transfer vehicle physics + surfaces
     │   ├── Transmission.js # engine, torque curve, gears, clutch, shifting
     │   ├── Race.js         # laps, checkpoints, timers, countdown, finish
-    │   ├── Camera.js       # chase + cockpit camera rig
+    │   ├── Camera.js       # chase + cockpit camera rig (shake, speed FOV)
     │   ├── Input.js        # keyboard + touch → smoothed control state
-    │   ├── Audio.js        # Web Audio engine/screech/wind/UI sounds
+    │   ├── Audio.js        # Web Audio V10-style synthesis + effects
     │   ├── Settings.js     # persisted player settings
-    │   └── Effects.js      # pooled tire smoke / dust particles
+    │   └── Effects.js      # pooled smoke/dust particles + speed lines
     └── ui/
         ├── HUD.js          # DOM HUD (tachometer, panels, settings, finish)
         └── TouchControls.js# touch button clusters (pointer events)

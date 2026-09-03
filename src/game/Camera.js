@@ -32,6 +32,7 @@ export class CameraRig {
     this._headOffset = new THREE.Vector3(); // cockpit head inertia offset
     this._first = true;
     this.smoothing = 1.0;             // settings multiplier
+    this._t = 0;                      // shake clock
   }
 
   setSmoothing(mult) {
@@ -116,6 +117,7 @@ export class CameraRig {
   }
 
   update(dt, phys, inputState, car) {
+    this._t += dt;
     if (this.mode === 'cockpit') {
       this._updateCockpit(dt, phys, car);
     } else {
@@ -146,7 +148,7 @@ export class CameraRig {
     this.roll = THREE.MathUtils.damp(this.roll, targetRoll, 6, dt);
 
     const speedN = Math.min(1, Math.abs(phys.vF) / CAR.maxSpeed);
-    const targetFov = CAMERA.fovBase + CAMERA.fovSpeedBoost * speedN;
+    const targetFov = CAMERA.fovBase + CAMERA.fovSpeedBoost * Math.pow(speedN, 1.25);
     this.fov = THREE.MathUtils.damp(this.fov, targetFov, 4, dt);
   }
 
@@ -180,11 +182,27 @@ export class CameraRig {
       THREE.MathUtils.clamp(-phys.latAccel * 0.001, -0.03, 0.03);
     this.roll = THREE.MathUtils.damp(this.roll, targetRoll, 6, dt);
 
-    this.fov = CAMERA.cockpitFov;
+    // cockpit FOV widens a touch with speed too
+    const speedN = Math.min(1, Math.abs(phys.vF) / CAR.maxSpeed);
+    this.fov = CAMERA.cockpitFov + CAMERA.cockpitFovBoost * Math.pow(speedN, 1.2);
   }
 
   apply(phys, car) {
     this.camera.position.copy(this.curPos);
+
+    // high-speed shake: smooth pseudo-noise, scales with speed²
+    const sN = Math.min(1, Math.abs(phys.vF) / CAR.maxSpeed);
+    const amp = this.mode === 'chase'
+      ? CAMERA.chaseShake * Math.pow(sN, 2.2)
+      : CAMERA.cockpitShake * (0.25 + Math.pow(sN, 2));
+    if (amp > 0.0005) {
+      const t = this._t;
+      this.camera.position.x +=
+        (Math.sin(t * 31.7) * 0.55 + Math.sin(t * 47.3) * 0.3 + Math.sin(t * 13.1) * 0.15) * amp;
+      this.camera.position.y +=
+        (Math.sin(t * 39.1 + 1.7) * 0.5 + Math.sin(t * 53.7) * 0.3) * amp * 0.7;
+    }
+
     this.camera.lookAt(this.curLook);
     this.camera.rotateZ(this.roll);
     if (Math.abs(this.camera.fov - this.fov) > 0.02) {

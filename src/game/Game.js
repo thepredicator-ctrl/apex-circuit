@@ -13,12 +13,12 @@ import { Transmission } from './Transmission.js';
 import { CameraRig } from './Camera.js';
 import { Input } from './Input.js';
 import { GameAudio } from './Audio.js';
-import { Effects } from './Effects.js';
+import { Effects, SpeedLines } from './Effects.js';
 import { RaceSystem, formatTime } from './Race.js';
 import { Settings } from './Settings.js';
 import { HUD } from '../ui/HUD.js';
 import { TouchControls } from '../ui/TouchControls.js';
-import { QUALITY, WORLD } from './Constants.js';
+import { QUALITY, WORLD, CAR } from './Constants.js';
 
 const PHYS_STEP = 1 / 120;
 
@@ -79,7 +79,7 @@ export class Game {
     this.transmission = new Transmission();
     this.transmission._onShift = (gear, isUp) => this.audio && this.audio.shiftBlip(isUp);
 
-    this.car = new Car();
+    this.car = new Car(this.track);   // track -> live minimap on the MMI screen
     this.scene.add(this.car.group);
 
     this.phys = new VehiclePhysics(this.track, this.transmission);
@@ -88,6 +88,7 @@ export class Game {
     this.cameraRig = new CameraRig(this.camera);
 
     this.effects = new Effects(this.scene);
+    this.speedLines = new SpeedLines(this.scene);
 
     // ---- subsystems --------------------------------------------------------
     this.audio = new GameAudio();
@@ -354,6 +355,12 @@ export class Game {
     }
 
     this.environment.update(this.phys.position, this.camera);
+
+    // speed streaks (sense of speed)
+    this.speedLines.update(
+      dt, this.camera, this.phys.velocity,
+      Math.min(1, Math.abs(this.phys.vF) / CAR.maxSpeed)
+    );
 
     // audio
     this.audio.update(dt, {

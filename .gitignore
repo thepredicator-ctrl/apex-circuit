@@ -23,3 +23,5 @@ download/
 upload/
 worklog.md
 .agent-browser/
+# tool result caches
+tool-results/
