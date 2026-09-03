@@ -298,7 +298,12 @@ export class Car {
         bevelThickness: 0.025, bevelSize: 0.02, bevelSegments: 2,
         curveSegments: 26
       });
-      g.translate(0, R, cz > 0 ? 0.74 : -1.08);
+      // translate to the wheel: X = front/rear position (cx!), Y over the
+      // wheel centre, Z starts at the hull side wall and extrudes outward.
+      // (Missing cx here used to pile all four flares at x=0 — a stray arch
+      // across the doors — leaving the real wheels bare: the "overlapping
+      // tire" bug.)
+      g.translate(cx, R, cz > 0 ? 0.74 : -1.08);
       flare.push(g);
 
       // dark well liner: open half-cylinder over the top of the tire
