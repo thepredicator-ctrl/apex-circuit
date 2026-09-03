@@ -25,3 +25,6 @@ worklog.md
 .agent-browser/
 # tool result caches
 tool-results/
+
+# alt package manager lockfile
+bun.lock

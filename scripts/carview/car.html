@@ -1,0 +1,43 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><style>body{margin:0;background:#202830}canvas{display:block}</style></head>
+<body><script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { Car } from '../../src/game/Car.js';
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x30383f);
+const hemi = new THREE.HemisphereLight(0xffffff, 0x445566, 1.2); scene.add(hemi);
+const sun = new THREE.DirectionalLight(0xffffff, 2.2); sun.position.set(5, 9, 4); scene.add(sun);
+const ground = new THREE.Mesh(new THREE.PlaneGeometry(40, 40), new THREE.MeshStandardMaterial({ color: 0x3a444c }));
+ground.rotation.x = -Math.PI / 2; scene.add(ground);
+
+const car = new Car(null);
+car.group.position.y = 0.02;
+scene.add(car.group);
+
+const cam = new THREE.PerspectiveCamera(45, innerWidth / innerHeight, 0.05, 100);
+cam.position.set(5.5, 2.2, 5.5);
+const controls = new OrbitControls(cam, document.body);
+controls.target.set(0, 0.55, 0);
+controls.update();
+
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setSize(innerWidth, innerHeight);
+renderer.setPixelRatio(1);
+document.body.appendChild(renderer.domElement);
+
+// steer the front wheels a bit + spin them slowly so both states are visible
+car.steeringSpin.rotation.x = -1.2; // steering wheel turned
+let t = 0;
+(function loop() {
+  requestAnimationFrame(loop);
+  t += 0.01;
+  for (const w of car.wheels) {
+    if (w.front) w.steerGroup.rotation.y = 0.35;
+    w.spinGroup.rotation.z = t;
+  }
+  renderer.render(scene, cam);
+})();
+window.__snap = async () => true;
+</script></body></html>
