@@ -74,6 +74,13 @@ export function buildInterior(car) {
   _buildSeats(car);
   _buildControls(car);
   _buildDriver(car);
+
+  // warm red cabin fill so the cockpit never goes pitch black at night —
+  // subtle: the screens and the ambient light line do most of the work
+  const cabin = new THREE.PointLight(0xff5544, 1.05, 2.6, 2);
+  cabin.position.set(0.55, 1.08, 0.05);
+  car.body.add(cabin);
+  car.cabinLight = cabin;
 }
 
 // ------------------------------------------------------------------ tub
@@ -416,10 +423,17 @@ function _buildDriver(car) {
 // VIRTUAL COCKPIT (instrument cluster canvas)
 // ===================================================================
 
-export function drawCluster(car, rpmNorm, speedKmh, gearLabel, limiter) {
+export function drawCluster(car, rpmNorm, speedKmh, gearLabel, limiter, race = null) {
   const ctx = car._clusterCtx;
   if (!ctx) return;
   const W = 512, H = 256;
+
+  const fmtLap = (t) => {
+    if (t == null) return '--:--.---';
+    const m = Math.floor(t / 60);
+    const s = t - m * 60;
+    return `${m}:${s.toFixed(3).padStart(6, '0')}`;
+  };
 
   // background
   const bg = ctx.createLinearGradient(0, 0, 0, H);
@@ -528,6 +542,28 @@ export function drawCluster(car, rpmNorm, speedKmh, gearLabel, limiter) {
   ctx.fillText('APEX  R8', 16, H - 16);
   ctx.textAlign = 'right';
   ctx.fillText('QUATTRO', W - 16, H - 16);
+
+  // --- lap info (top corners, needs the race system) -----------------------
+  if (race) {
+    ctx.textAlign = 'left';
+    ctx.fillStyle = GREY;
+    ctx.font = '700 13px system-ui, sans-serif';
+    ctx.fillText(`LAP ${Math.min(race.lap, race.totalLaps)}/${race.totalLaps}`, 16, 44);
+    ctx.fillStyle = WHITE;
+    ctx.font = '600 15px system-ui, sans-serif';
+    const last = race.lapTimes.length ? race.lapTimes[race.lapTimes.length - 1] : null;
+    ctx.fillText(fmtLap(last), 16, 66);
+    ctx.fillStyle = GREY;
+    ctx.font = '600 11px system-ui, sans-serif';
+    ctx.fillText('BEST ' + fmtLap(race.bestLap), 16, 86);
+    ctx.textAlign = 'right';
+    ctx.fillStyle = limiter ? RED : '#6fd06f';
+    ctx.font = '700 13px system-ui, sans-serif';
+    ctx.fillText('D ' + gearLabel, W - 16, 44);
+    ctx.fillStyle = GREY;
+    ctx.font = '600 11px system-ui, sans-serif';
+    ctx.fillText('S TRONIC', W - 16, 66);
+  }
 
   // limiter border pulse
   if (limiter) {

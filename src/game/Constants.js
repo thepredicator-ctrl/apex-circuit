@@ -3,20 +3,38 @@
  * All units are meters / seconds / radians unless noted.
  */
 
+/**
+ * Night-race atmosphere: cold moonlight, deep fog, faint city glow on the
+ * horizon. Everything beyond the floodlight pools falls into darkness —
+ * that is what makes the circuit feel fast and dangerous.
+ */
 export const WORLD = {
-  fogColor: 0xc3dcea,
-  fogNear: 170,
-  fogFar: 1250,
-  skyTop: 0x3a7bd5,
-  skyHorizon: 0xcfe8f7,
-  skyGround: 0xb9cfd8,
-  sunColor: 0xfff1d6,
-  sunIntensity: 2.8,
-  hemiSky: 0xbdd9ff,
-  hemiGround: 0x557a3e,
-  hemiIntensity: 1.0,
-  // direction the sun shines FROM (normalized in code)
-  sunDirection: [0.42, 0.62, 0.3]
+  fogColor: 0x070b15,
+  fogNear: 34,
+  fogFar: 1000,
+  skyTop: 0x01030a,
+  skyHorizon: 0x0c1526,
+  skyGround: 0x03050b,
+  cityGlow: 0x241a20,        // faint warm haze on the horizon (distant city)
+  sunColor: 0xdfe9ff,        // the "sun" is the moon now
+  sunIntensity: 0.62,
+  hemiSky: 0x1a2742,
+  hemiGround: 0x04060a,
+  hemiIntensity: 0.32,
+  // direction the moon shines FROM (normalized in code)
+  sunDirection: [0.38, 0.72, -0.32],
+  envIntensity: 0.25,        // RoomEnvironment probe strength (night-dimmed)
+  stars: { count: 1300, mobile: 600 }
+};
+
+/** Car headlight rig (night race — always on). */
+export const HEADLIGHTS = {
+  color: 0xd9e8ff,
+  intensity: 480,            // candela (physically-based spot)
+  distance: 150,
+  angle: 0.46,
+  penumbra: 0.6,
+  decay: 1.55
 };
 
 export const CAR = {
@@ -136,25 +154,25 @@ export const QUALITY = {
     pixelRatio: 1.0,
     shadows: false,
     shadowMapSize: 512,
-    fogFar: 780,
+    fogFar: 620,
     particles: 0.45,
     aniso: 2
   },
   medium: {
     label: 'MEDIUM',
-    pixelRatio: 1.75,
+    pixelRatio: 1.6,
     shadows: true,
     shadowMapSize: 1024,
-    fogFar: 1100,
+    fogFar: 900,
     particles: 0.8,
     aniso: 4
   },
   high: {
     label: 'HIGH',
-    pixelRatio: 2.0,
+    pixelRatio: 1.9,
     shadows: true,
     shadowMapSize: 2048,
-    fogFar: 1400,
+    fogFar: 1200,
     particles: 1.2,
     aniso: 8
   }

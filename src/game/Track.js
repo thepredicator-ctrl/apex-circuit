@@ -94,6 +94,8 @@ export class Track {
     this._buildRunoff();
     this._buildCurbs();
     this._buildWalls();
+    this._buildWallTops();
+    this._buildTunnel();
     this._buildGround();
     this._buildStartLine();
     this._buildGantry();
@@ -110,35 +112,40 @@ export class Track {
   // ---------------------------------------------------------------- textures
   _buildTextures(aniso) {
     this.texAsphalt = canvasTexture(256, 256, (ctx, w, h) => {
-      ctx.fillStyle = '#3b3e43';
+      ctx.fillStyle = '#1e2126';
       ctx.fillRect(0, 0, w, h);
-      noise(ctx, w, h, 2200, 0.16, '#2e3136', '#4a4e55');
-      // tire wear bands
-      ctx.fillStyle = '#33363b';
-      ctx.globalAlpha = 0.5;
+      noise(ctx, w, h, 2400, 0.2, '#15171b', '#2b2f36');
+      // tire wear bands (slightly polished = a touch darker)
+      ctx.fillStyle = '#1a1d22';
+      ctx.globalAlpha = 0.55;
       ctx.fillRect(w * 0.32, 0, w * 0.09, h);
       ctx.fillRect(w * 0.59, 0, w * 0.09, h);
       ctx.globalAlpha = 1;
       // edge lines
-      ctx.fillStyle = '#e9ecef';
+      ctx.fillStyle = '#b9bfc8';
       ctx.fillRect(w * 0.035, 0, w * 0.028, h);
       ctx.fillRect(w * 0.937, 0, w * 0.028, h);
+      // faint dashed center line
+      ctx.fillStyle = '#79818c';
+      ctx.globalAlpha = 0.5;
+      for (let y = 0; y < h; y += 48) ctx.fillRect(w / 2 - 2, y, 4, 22);
+      ctx.globalAlpha = 1;
     }, { anisotropy: aniso });
 
     this.texCurb = canvasTexture(32, 64, (ctx, w, h) => {
-      ctx.fillStyle = '#d8402f';
+      ctx.fillStyle = '#93261a';
       ctx.fillRect(0, 0, w, h / 2);
-      ctx.fillStyle = '#eceff2';
+      ctx.fillStyle = '#c9cfd7';
       ctx.fillRect(0, h / 2, w, h / 2);
       noise(ctx, w, h, 60, 0.1, '#00000022', '#ffffff22');
     }, { anisotropy: aniso });
 
     this.texRunoff = canvasTexture(128, 128, (ctx, w, h) => {
-      ctx.fillStyle = '#8a8474';
+      ctx.fillStyle = '#45423a';
       ctx.fillRect(0, 0, w, h);
-      noise(ctx, w, h, 900, 0.22, '#6e685a', '#a49d8c');
+      noise(ctx, w, h, 900, 0.22, '#312e27', '#57534a');
       for (let i = 0; i < 40; i++) {
-        ctx.fillStyle = '#75705f';
+        ctx.fillStyle = '#39362f';
         ctx.globalAlpha = 0.3;
         ctx.beginPath();
         ctx.arc(Math.random() * w, Math.random() * h, 3 + Math.random() * 8, 0, Math.PI * 2);
@@ -150,27 +157,27 @@ export class Track {
 
     this.texWall = canvasTexture(64, 64, (ctx, w, h) => {
       // u axis = wall height (bottom -> top)
-      ctx.fillStyle = '#9aa0a6';
+      ctx.fillStyle = '#3d4148';
       ctx.fillRect(0, 0, w, h);
-      noise(ctx, w, h, 350, 0.12, '#7c8288', '#b8bec4');
-      ctx.fillStyle = '#7c8288';
+      noise(ctx, w, h, 350, 0.12, '#2b2e34', '#4d525a');
+      ctx.fillStyle = '#2b2e34';
       ctx.globalAlpha = 0.5;
       for (let y = 0; y < h; y += 16) ctx.fillRect(0, y, w * 0.7, 1);
       ctx.globalAlpha = 1;
       // red/white band on top
       for (let y = 0; y < h; y += 16) {
-        ctx.fillStyle = (y / 16) % 2 === 0 ? '#d8402f' : '#eceff2';
+        ctx.fillStyle = (y / 16) % 2 === 0 ? '#8f2418' : '#c6ccd4';
         ctx.fillRect(w * 0.72, y, w * 0.28, 16);
       }
     }, { anisotropy: aniso });
 
     this.texGrass = canvasTexture(256, 256, (ctx, w, h) => {
-      ctx.fillStyle = '#55873f';
+      ctx.fillStyle = '#1a2718';
       ctx.fillRect(0, 0, w, h);
-      noise(ctx, w, h, 2600, 0.2, '#41702f', '#6b9c50');
+      noise(ctx, w, h, 2600, 0.2, '#121c12', '#24351f');
       // large soft blotches to break tiling
       for (let i = 0; i < 24; i++) {
-        ctx.fillStyle = Math.random() < 0.5 ? '#4a7a35' : '#5f9247';
+        ctx.fillStyle = Math.random() < 0.5 ? '#152114' : '#1f2f1b';
         ctx.globalAlpha = 0.16;
         ctx.beginPath();
         ctx.arc(Math.random() * w, Math.random() * h, 14 + Math.random() * 26, 0, Math.PI * 2);
@@ -220,6 +227,16 @@ export class Track {
       ctx.lineWidth = 6;
       ctx.strokeRect(3, 3, w - 6, h - 6);
     }, { wrapS: THREE.ClampToEdgeWrapping, wrapT: THREE.ClampToEdgeWrapping, anisotropy: aniso });
+
+    // light-box texture pool shared by the emissive trackside panels
+    this.texLightBox = canvasTexture(256, 256, (ctx, w, h) => {
+      const g = ctx.createRadialGradient(w / 2, h / 2, 8, w / 2, h / 2, w / 2);
+      g.addColorStop(0, 'rgba(255,241,214,0.85)');
+      g.addColorStop(0.55, 'rgba(255,225,170,0.35)');
+      g.addColorStop(1, 'rgba(255,220,160,0)');
+      ctx.fillStyle = g;
+      ctx.fillRect(0, 0, w, h);
+    }, { wrapS: THREE.ClampToEdgeWrapping, wrapT: THREE.ClampToEdgeWrapping });
 
     this.texSponsor = canvasTexture(512, 96, (ctx, w, h) => {
       ctx.fillStyle = '#f2f4f6';
@@ -446,7 +463,9 @@ export class Track {
     if (geos.length) {
       const merged = mergeGeometries(geos);
       const curbs = new THREE.Mesh(merged, new THREE.MeshStandardMaterial({
-        map: this.texCurb, roughness: 0.85, metalness: 0, side: THREE.DoubleSide
+        map: this.texCurb, roughness: 0.8, metalness: 0, side: THREE.DoubleSide,
+        // faint self-lit strip so the racing line stays readable at night
+        emissive: 0xffffff, emissiveMap: this.texCurb, emissiveIntensity: 0.33
       }));
       curbs.receiveShadow = true;
       this.group.add(curbs);
@@ -480,6 +499,126 @@ export class Track {
     );
     walls.receiveShadow = true;
     this.group.add(walls);
+  }
+
+  /**
+   * Retro-reflective marker strip along the top of both walls — a thin
+   * emissive line that traces the whole circuit at night and reads as the
+   * dangerous edge of the track.
+   */
+  _buildWallTops() {
+    const N = this.sampleCount;
+    const dist = this.roadHalfWidth + 3.4;
+    const geos = [];
+    for (const side of [1, -1]) {
+      const A = [], B = [], vArr = [];
+      for (let i = 0; i <= N; i++) {
+        const j = i % N;
+        const x = this.px[j], z = this.pz[j];
+        const rx = this.rightX[j] * side, rz = this.rightZ[j] * side;
+        const yBase = this.py[j] + this.bank[j] * dist * side * Math.max(0, 1 - (dist - (this.roadHalfWidth + 1.5)) / 3.5) - 0.05;
+        A.push(new THREE.Vector3(x + rx * (dist - 0.02), yBase + 1.16, z + rz * (dist - 0.02)));
+        B.push(new THREE.Vector3(x + rx * (dist + 0.16), yBase + 1.16, z + rz * (dist + 0.16)));
+        vArr.push(i * this.spacing / 4);
+      }
+      geos.push(ribbonGeometry(A, B, vArr));
+    }
+    const strip = new THREE.Mesh(
+      mergeGeometries(geos),
+      new THREE.MeshBasicMaterial({ color: 0x8fa3bd, toneMapped: false })
+    );
+    strip.renderOrder = 2;
+    this.group.add(strip);
+  }
+
+  /**
+   * Night tunnel: a ~70 m concrete tube over the fast sweeper after the
+   * start straight. Ribs follow the centerline; cool-white light strips run
+   * across the ceiling, amber portals mark both entrances.
+   */
+  _buildTunnel() {
+    const N = this.sampleCount;
+    const W = this.roadHalfWidth + 3.6;   // tunnel half width (outside physics walls)
+    const H = 5.6;                        // tunnel inner height
+    const ribEvery = Math.max(4, Math.round(7 / this.spacing));
+    const s0 = 0.13, s1 = 0.19;
+    const i0 = Math.round(s0 * N), i1 = Math.round(s1 * N);
+    const span = (i1 - i0 + N) % N;
+    if (span < ribEvery * 4) return;      // curve too short — skip quietly
+
+    const dummy = new THREE.Object3D();
+    const concrete = [], strips = [], portals = [];
+    const stripPts = [];
+    const ribs = Math.floor(span / ribEvery);
+
+    for (let r = 0; r <= ribs; r++) {
+      const j = (i0 + r * ribEvery) % N;
+      const x = this.px[j], z = this.pz[j];
+      const heading = Math.atan2(this.tanX[j], this.tanZ[j]);
+      dummy.position.set(x, this.py[j] + 0.02, z);
+      dummy.rotation.set(0, heading, 0);
+      dummy.updateMatrix();
+
+      // side walls (both sides)
+      for (const side of [1, -1]) {
+        const wall = new THREE.BoxGeometry(0.55, H + 1.2, 7.4);
+        wall.translate(0, (H + 1.2) / 2 - 0.4, 0);
+        wall.applyMatrix4(dummy.matrix.clone()
+          .multiply(new THREE.Matrix4().makeTranslation(W * side, 0, 0)));
+        concrete.push(wall);
+      }
+      // ceiling slab
+      const ceil = new THREE.BoxGeometry(W * 2 + 0.55, 0.55, 7.4);
+      ceil.translate(0, H + 0.35, 0);
+      ceil.applyMatrix4(dummy.matrix);
+      concrete.push(ceil);
+
+      // cool light strips across the ceiling every other rib
+      if (r % 2 === 0) {
+        const stripGeo = new THREE.BoxGeometry(W * 1.42, 0.07, 0.5);
+        stripGeo.translate(0, H - 0.02, 0);
+        stripGeo.applyMatrix4(dummy.matrix);
+        strips.push(stripGeo);
+        stripPts.push([x, this.py[j] + H - 0.06, z]);
+      }
+      // amber portal frames at both ends
+      if (r === 0 || r === ribs) {
+        for (const side of [1, -1]) {
+          const post = new THREE.BoxGeometry(0.75, H + 0.6, 0.75);
+          post.translate(0, (H + 0.6) / 2 - 0.4, 0);
+          post.applyMatrix4(dummy.matrix.clone()
+            .multiply(new THREE.Matrix4().makeTranslation((W + 0.2) * side, 0, 0)));
+          portals.push(post);
+        }
+        const lintel = new THREE.BoxGeometry((W + 0.2) * 2 + 0.75, 0.75, 0.75);
+        lintel.translate(0, H + 0.85, 0);
+        lintel.applyMatrix4(dummy.matrix);
+        portals.push(lintel);
+      }
+    }
+
+    const merge = (arr) => mergeGeometries(arr.map((g) => (g.index ? g.toNonIndexed() : g)), false);
+    this.group.add(new THREE.Mesh(merge(concrete), new THREE.MeshStandardMaterial({
+      color: 0x2a2d33, roughness: 0.95, metalness: 0.05, side: THREE.DoubleSide
+    })));
+    this.group.add(new THREE.Mesh(merge(strips), new THREE.MeshStandardMaterial({
+      color: 0xd9ecff, emissive: 0xcfe6ff, emissiveIntensity: 3.2, roughness: 0.4
+    })));
+
+    // additive glow sprites along the strips — reads as bloom on any GPU
+    const stripGlowMat = new THREE.SpriteMaterial({
+      map: this.texLightBox, color: 0xcfe6ff, transparent: true, opacity: 0.5,
+      blending: THREE.AdditiveBlending, depthWrite: false, toneMapped: false
+    });
+    for (const [gx, gy, gz] of stripPts) {
+      const sp = new THREE.Sprite(stripGlowMat);
+      sp.position.set(gx, gy, gz);
+      sp.scale.set(W * 1.5, 2.4, 1);
+      this.group.add(sp);
+    }
+    this.group.add(new THREE.Mesh(merge(portals), new THREE.MeshStandardMaterial({
+      color: 0x33240f, emissive: 0xff9d14, emissiveIntensity: 1.6, roughness: 0.6
+    })));
   }
 
   // ------------------------------------------------------------------ grass
@@ -551,7 +690,10 @@ export class Track {
 
     const banner = new THREE.Mesh(
       new THREE.PlaneGeometry(this.roadHalfWidth * 2, 1.7),
-      new THREE.MeshStandardMaterial({ map: this.texBanner, side: THREE.DoubleSide, roughness: 0.8 })
+      new THREE.MeshStandardMaterial({
+        map: this.texBanner, side: THREE.DoubleSide, roughness: 0.7,
+        emissive: 0xffffff, emissiveMap: this.texBanner, emissiveIntensity: 0.5
+      })
     );
     // flip so the readable face greets oncoming cars
     banner.rotation.y = Math.PI;
@@ -563,6 +705,10 @@ export class Track {
     lampPanel.position.set(0, 7.15, 0.1);
     g.add(lampPanel);
     this.startLamps = [];
+    const lampGlowMat = new THREE.SpriteMaterial({
+      map: this.texLightBox, color: 0xff5040, transparent: true, opacity: 0.35,
+      blending: THREE.AdditiveBlending, depthWrite: false, toneMapped: false
+    });
     for (let i = 0; i < 5; i++) {
       const lampMat = new THREE.MeshStandardMaterial({
         color: 0x1a1d22, emissive: 0x000000, emissiveIntensity: 0, roughness: 0.4
@@ -571,6 +717,10 @@ export class Track {
       lamp.position.set((i - 2) * 0.68, 7.15, -0.08); // facing oncoming cars (-tangent)
       g.add(lamp);
       this.startLamps.push(lampMat);
+      const glow = new THREE.Sprite(lampGlowMat);
+      glow.position.set((i - 2) * 0.68, 7.15, -0.14);
+      glow.scale.set(1.15, 1.15, 1);
+      g.add(glow);
     }
 
     this.group.add(g);
@@ -604,10 +754,10 @@ export class Track {
   // ------------------------------------------------------------------ gates
   _buildGates() {
     const gateMat = new THREE.MeshStandardMaterial({
-      color: 0x1d2b33, emissive: 0x35e0ff, emissiveIntensity: 1.5, roughness: 0.5
+      color: 0x1d2b33, emissive: 0x35e0ff, emissiveIntensity: 2.6, roughness: 0.5
     });
     const beamMat = new THREE.MeshStandardMaterial({
-      color: 0x1d2b33, emissive: 0x35e0ff, emissiveIntensity: 1.2,
+      color: 0x1d2b33, emissive: 0x35e0ff, emissiveIntensity: 2.0,
       transparent: true, opacity: 0.45
     });
 
@@ -664,7 +814,7 @@ export class Track {
     }
     const roof = new THREE.Mesh(
       new THREE.BoxGeometry(8, 0.18, 24),
-      new THREE.MeshStandardMaterial({ color: 0xd8342a, roughness: 0.5, metalness: 0.3 })
+      new THREE.MeshStandardMaterial({ color: 0x38100c, roughness: 0.5, metalness: 0.3 })
     );
     roof.position.set(-(this.roadHalfWidth + 8), 4.6, 0);
     roof.castShadow = true;
@@ -681,7 +831,10 @@ export class Track {
     for (const z of [-8, 0, 8]) {
       const board = new THREE.Mesh(
         new THREE.PlaneGeometry(6, 0.9),
-        new THREE.MeshStandardMaterial({ map: this.texSponsor, roughness: 0.7, side: THREE.DoubleSide })
+        new THREE.MeshStandardMaterial({
+          map: this.texSponsor, roughness: 0.6, side: THREE.DoubleSide,
+          emissive: 0xffffff, emissiveMap: this.texSponsor, emissiveIntensity: 0.85
+        })
       );
       board.position.set(-(this.roadHalfWidth + 3.2), 0.75, z);
       board.rotation.y = Math.PI / 2;
@@ -696,8 +849,11 @@ export class Track {
     const N = this.sampleCount;
     const half = this.roadHalfWidth;
     const spacingM = this.spacing;
-    const boardMat = new THREE.MeshStandardMaterial({ map: this.texBoard, roughness: 0.7, side: THREE.DoubleSide });
-    const postMat = new THREE.MeshStandardMaterial({ color: 0x3a3f46, roughness: 0.8 });
+    const boardMat = new THREE.MeshStandardMaterial({
+      map: this.texBoard, roughness: 0.7, side: THREE.DoubleSide,
+      emissive: 0xffffff, emissiveMap: this.texBoard, emissiveIntensity: 0.55
+    });
+    const postMat = new THREE.MeshStandardMaterial({ color: 0x22262b, roughness: 0.8 });
 
     // find corner entries: curvature rising past threshold
     const entries = [];
@@ -733,34 +889,67 @@ export class Track {
   _buildLightPoles() {
     const N = this.sampleCount;
     const half = this.roadHalfWidth;
-    const poleMat = new THREE.MeshStandardMaterial({ color: 0x48505a, roughness: 0.6, metalness: 0.6 });
+    const poleMat = new THREE.MeshStandardMaterial({ color: 0x22262c, roughness: 0.55, metalness: 0.7 });
     const lampMat = new THREE.MeshStandardMaterial({
-      color: 0xdde3ea, emissive: 0xfff3d0, emissiveIntensity: 0.35, roughness: 0.4
+      color: 0xfff6e0, emissive: 0xffe9b8, emissiveIntensity: 4.2, roughness: 0.3
+    });
+    const poolMat = new THREE.MeshBasicMaterial({
+      map: this.texLightBox, transparent: true, opacity: 0.16,
+      blending: THREE.AdditiveBlending, depthWrite: false, toneMapped: false,
+      color: 0xffe9b8
     });
     const geos = [];
     const lampHeads = [];
-    for (let k = 0; k < 8; k++) {
-      const i = Math.round((k / 8) * N);
+    const pools = [];
+    const count = 13;
+    for (let k = 0; k < count; k++) {
+      const i = Math.round((k / count) * N);
       const side = k % 2 === 0 ? 1 : -1;
       const x = this.px[i] + this.rightX[i] * (half + 7.5) * side;
       const z = this.pz[i] + this.rightZ[i] * (half + 7.5) * side;
       const y = this.heightAtWorld(x, z);
-      const pole = new THREE.CylinderGeometry(0.09, 0.14, 9, 8);
-      pole.translate(x, y + 4.5, z);
+      const pole = new THREE.CylinderGeometry(0.09, 0.16, 11, 8);
+      pole.translate(x, y + 5.5, z);
       geos.push(pole);
       const armDir = -side;
-      const arm = new THREE.CylinderGeometry(0.05, 0.05, 1.6, 6).rotateZ(Math.PI / 2);
-      arm.translate(x + this.rightX[i] * 0.8 * armDir, y + 9, z + this.rightZ[i] * 0.8 * armDir);
+      const arm = new THREE.CylinderGeometry(0.05, 0.05, 2.0, 6).rotateZ(Math.PI / 2);
+      arm.translate(x + this.rightX[i] * 1.0 * armDir, y + 10.9, z + this.rightZ[i] * 1.0 * armDir);
       geos.push(arm);
-      const head = new THREE.BoxGeometry(0.7, 0.14, 0.3);
-      head.translate(x + this.rightX[i] * 1.5 * armDir, y + 8.95, z + this.rightZ[i] * 1.5 * armDir);
+      const head = new THREE.BoxGeometry(1.1, 0.16, 0.45);
+      head.translate(x + this.rightX[i] * 1.9 * armDir, y + 10.82, z + this.rightZ[i] * 1.9 * armDir);
       lampHeads.push(head);
+      // warm pool of light on the ground under the head
+      const hx = x + this.rightX[i] * 1.9 * armDir;
+      const hz = z + this.rightZ[i] * 1.9 * armDir;
+      const pool = new THREE.Mesh(new THREE.PlaneGeometry(26, 26), poolMat);
+      pool.rotation.x = -Math.PI / 2;
+      pool.position.set(hx, this.heightAtWorld(hx, hz) + 0.09, hz);
+      pool.renderOrder = 1;
+      pools.push(pool);
     }
     const polesMesh = new THREE.Mesh(mergeGeometries(geos, false), poleMat);
     polesMesh.castShadow = true;
     this.group.add(polesMesh);
     const headsMesh = new THREE.Mesh(mergeGeometries(lampHeads, false), lampMat);
     this.group.add(headsMesh);
+    for (const p of pools) this.group.add(p);
+
+    // halo around every floodlight head
+    const headGlowMat = new THREE.SpriteMaterial({
+      map: this.texLightBox, color: 0xffe9b8, transparent: true, opacity: 0.45,
+      blending: THREE.AdditiveBlending, depthWrite: false, toneMapped: false
+    });
+    for (let k = 0; k < count; k++) {
+      const i = Math.round((k / count) * N);
+      const side = k % 2 === 0 ? 1 : -1;
+      const armDir = -side;
+      const hx = this.px[i] + this.rightX[i] * (half + 7.5) * side + this.rightX[i] * 1.9 * armDir;
+      const hz = this.pz[i] + this.rightZ[i] * (half + 7.5) * side + this.rightZ[i] * 1.9 * armDir;
+      const sp = new THREE.Sprite(headGlowMat);
+      sp.position.set(hx, this.heightAtWorld(hx, hz) + 10.78, hz);
+      sp.scale.set(5.5, 3.2, 1);
+      this.group.add(sp);
+    }
   }
 
   // ------------------------------------------------------------------ trees
@@ -792,9 +981,9 @@ export class Track {
       (Math.random() < 0.55 ? pines : blobs).push([x, z]);
     }
 
-    const trunkMat = new THREE.MeshStandardMaterial({ color: 0x6b4a2f, roughness: 0.95 });
+    const trunkMat = new THREE.MeshStandardMaterial({ color: 0x241a12, roughness: 0.95 });
     const crownMat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.9, flatShading: true });
-    const crownColors = [0x2f6b33, 0x3a7a3d, 0x2c5f30, 0x4d8a3f, 0x467a38];
+    const crownColors = [0x14261a, 0x182e1f, 0x112318, 0x1c3322, 0x0f1e14];
 
     const trunks = new THREE.InstancedMesh(trunkGeo, trunkMat, positions.length);
     const pinesMesh = new THREE.InstancedMesh(pineGeo, crownMat, Math.max(1, pines.length));
@@ -856,7 +1045,7 @@ export class Track {
     const mesh = new THREE.InstancedMesh(geo, mat, list.length);
     const dummy = new THREE.Object3D();
     const color = new THREE.Color();
-    const palette = [0xd8402f, 0xe8eaec, 0x22252a];
+    const palette = [0x4a1a13, 0x43464c, 0x101216];
     list.forEach(([x, z, i, side], k) => {
       const y = this.heightAtWorld(x, z);
       dummy.position.set(x, y + 0.43, z);
@@ -884,7 +1073,7 @@ export class Track {
     }
     const mesh = new THREE.Mesh(
       mergeGeometries(geos),
-      new THREE.MeshLambertMaterial({ color: 0x7d93ac, flatShading: true })
+      new THREE.MeshLambertMaterial({ color: 0x11192a, flatShading: true })
     );
     this.group.add(mesh);
   }
@@ -917,8 +1106,7 @@ export class Track {
     const mesh = new THREE.Mesh(
       mergeGeometries(parts),
       new THREE.MeshLambertMaterial({
-        color: 0xffffff, transparent: true, opacity: 0.92,
-        emissive: 0xbfd4e2, emissiveIntensity: 0.55
+        color: 0x0d1322, transparent: true, opacity: 0.42
       })
     );
     this.group.add(mesh);

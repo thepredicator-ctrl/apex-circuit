@@ -13,6 +13,7 @@ import { formatTime } from '../game/Race.js';
 
 const TEMPLATE = `
 <div class="hud" id="hud">
+  <div class="hud-vignette" id="hud-vignette"></div>
   <div class="hud-panel hud-lap">
     <div class="hud-lap-row">
       <span class="hud-label">LAP</span>
@@ -109,6 +110,7 @@ export class HUD {
     const $ = (id) => document.getElementById(id);
     this.el = {
       hud: $('hud'),
+      vignette: $('hud-vignette'),
       lap: $('hud-lap'),
       pips: $('hud-pips'),
       laptime: $('hud-laptime'),
@@ -212,6 +214,10 @@ export class HUD {
     s.gear = trans ? trans.gearLabel : (phys.reversing ? 'R' : 'N');
     s.limiter = trans ? trans.limiterCut : false;
     this._drawTach();
+
+    // night vignette: closes in with speed — tunnel-vision rush
+    const speedN = Math.min(1, Math.abs(phys.vF || 0) / 66);
+    this.el.vignette.style.opacity = (0.32 + speedN * 0.42).toFixed(3);
 
     this.el.lap.textContent = String(race.lap);
     this.el.laptime.textContent = formatTime(race.state === 'racing' ? race.lapTime : 0);

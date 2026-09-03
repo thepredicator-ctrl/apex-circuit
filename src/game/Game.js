@@ -59,7 +59,7 @@ export class Game {
     this.renderer.shadowMap.enabled = true;
     this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    this.renderer.toneMappingExposure = 1.02;
+    this.renderer.toneMappingExposure = 1.18;
     this.container.appendChild(this.renderer.domElement);
 
     // ---- scene -----------------------------------------------------------
@@ -344,7 +344,7 @@ export class Game {
     if (racing) this.race.update(dt, this.phys);
 
     // visuals
-    this.car.updateVisual(dt, this.phys, this.transmission);
+    this.car.updateVisual(dt, this.phys, this.transmission, this.race);
     this._updateEffects(dt);
 
     // camera
@@ -354,7 +354,7 @@ export class Game {
       this.cameraRig.update(dt, this.phys, this.input.state, this.car);
     }
 
-    this.environment.update(this.phys.position, this.camera);
+    this.environment.update(this.phys.position, this.camera, dt);
 
     // speed streaks (sense of speed)
     this.speedLines.update(

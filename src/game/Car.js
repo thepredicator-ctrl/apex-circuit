@@ -19,7 +19,7 @@
 
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
-import { CAR, SUSPENSION } from './Constants.js';
+import { CAR, SUSPENSION, HEADLIGHTS } from './Constants.js';
 import { buildInterior, drawCluster, drawMMI } from './Interior.js';
 
 function extrudeShape(points, depth, bevel) {
@@ -61,6 +61,7 @@ export class Car {
     this._buildExterior();
     this._buildArches();
     this._buildWheels();
+    this._buildHeadlights();
 
     // Audi RS/R8 cockpit: dash, screens, high-poly steering wheel, seats,
     // pedals, driver — sets cockpitAnchor / steering refs / helmet too.
@@ -83,12 +84,14 @@ export class Car {
   // ------------------------------------------------------------------ mats
   _buildMaterials() {
     this.mats = {
-      paint: new THREE.MeshStandardMaterial({
-        color: 0xc4271e, metalness: 0.72, roughness: 0.3, flatShading: true,
-        envMapIntensity: 1.25
+      // clearcoat paint — deep Audi red with a lacquer layer that catches
+      // the floodlights and moonlight
+      paint: new THREE.MeshPhysicalMaterial({
+        color: 0xb0121a, metalness: 0.62, roughness: 0.34, flatShading: true,
+        clearcoat: 1.0, clearcoatRoughness: 0.14, envMapIntensity: 1.15
       }),
       paintDark: new THREE.MeshStandardMaterial({
-        color: 0x7e1812, metalness: 0.7, roughness: 0.42, flatShading: true
+        color: 0x5c0d0d, metalness: 0.7, roughness: 0.42, flatShading: true
       }),
       blackMatte: new THREE.MeshStandardMaterial({
         color: 0x14161a, metalness: 0.12, roughness: 0.88
@@ -126,11 +129,11 @@ export class Car {
         color: 0xd23a1e, metalness: 0.4, roughness: 0.5
       }),
       headlight: new THREE.MeshStandardMaterial({
-        color: 0xaeb49e, emissive: 0xfff3d8, emissiveIntensity: 1.8,
+        color: 0xaeb49e, emissive: 0xf2f8ff, emissiveIntensity: 3.6,
         metalness: 0.2, roughness: 0.3
       }),
       tail: new THREE.MeshStandardMaterial({
-        color: 0x400704, emissive: 0xff2016, emissiveIntensity: 0.6,
+        color: 0x400704, emissive: 0xff2016, emissiveIntensity: 1.6,
         roughness: 0.4
       }),
       reverse: new THREE.MeshStandardMaterial({
@@ -320,6 +323,65 @@ export class Car {
     this.body.add(linerMesh);
   }
 
+  // ---------------------------------------------------------- headlights
+  /**
+   * Real headlight rig: two spotlights aimed down the road (no shadows —
+   * cheap) plus emissive lenses. This is what makes the night track readable
+   * and dangerous: the world ahead only exists as far as the beams reach.
+   */
+  _buildHeadlights() {
+    const mk = (z) => {
+      const light = new THREE.SpotLight(
+        HEADLIGHTS.color, HEADLIGHTS.intensity,
+        HEADLIGHTS.distance, HEADLIGHTS.angle, HEADLIGHTS.penumbra, HEADLIGHTS.decay
+      );
+      light.position.set(2.05, 0.62, z);
+      light.castShadow = false;
+      const target = new THREE.Object3D();
+      target.position.set(34, -1.4, z * 1.35);
+      this.body.add(light);
+      this.body.add(target);
+      light.target = target;
+      return light;
+    };
+    this.headlightL = mk(0.62);
+    this.headlightR = mk(-0.62);
+
+    // lens halos (fake bloom — additive sprites, cheap on every GPU)
+    if (!this.mats.glowTex) {
+      const cv = document.createElement('canvas');
+      cv.width = cv.height = 128;
+      const c = cv.getContext('2d');
+      const g = c.createRadialGradient(64, 64, 4, 64, 64, 64);
+      g.addColorStop(0, 'rgba(255,255,255,0.9)');
+      g.addColorStop(0.4, 'rgba(255,255,255,0.28)');
+      g.addColorStop(1, 'rgba(255,255,255,0)');
+      c.fillStyle = g;
+      c.fillRect(0, 0, 128, 128);
+      this.mats.glowTex = new THREE.CanvasTexture(cv);
+      this.mats.glowTex.colorSpace = THREE.SRGBColorSpace;
+    }
+    const headGlow = new THREE.SpriteMaterial({
+      map: this.mats.glowTex, color: 0xeaf4ff, transparent: true, opacity: 0.8,
+      blending: THREE.AdditiveBlending, depthWrite: false, toneMapped: false
+    });
+    for (const z of [0.6, -0.6]) {
+      const sp = new THREE.Sprite(headGlow);
+      sp.position.set(2.28, 0.56, z);
+      sp.scale.set(0.55, 0.35, 1);
+      this.body.add(sp);
+    }
+    // tail bar halo — brightness driven by braking in updateVisual
+    this.tailGlowMat = new THREE.SpriteMaterial({
+      map: this.mats.glowTex, color: 0xff2418, transparent: true, opacity: 0.35,
+      blending: THREE.AdditiveBlending, depthWrite: false, toneMapped: false
+    });
+    const tailSp = new THREE.Sprite(this.tailGlowMat);
+    tailSp.position.set(-2.4, 0.68, 0);
+    tailSp.scale.set(1.7, 0.55, 1);
+    this.body.add(tailSp);
+  }
+
   _addMeshes(geos, mat, castShadow, receive) {
     if (!geos.length) return null;
     // ExtrudeGeometry is non-indexed while primitives are indexed —
@@ -414,8 +476,9 @@ export class Car {
    * @param {number} dt
    * @param {VehiclePhysics} phys
    * @param {Transmission} trans
+   * @param {RaceSystem} [race] — optional, feeds the Virtual Cockpit lap info
    */
-  updateVisual(dt, phys, trans) {
+  updateVisual(dt, phys, trans, race = null) {
     this._time += dt;
 
     this.group.position.set(phys.position.x, phys.position.y + 0.02, phys.position.z);
@@ -479,8 +542,9 @@ export class Car {
 
     // ---- lights -------------------------------------------------------------
     const braking = phys.brakeOut > 0.15 && phys.vF > 0.4;
-    this.mats.tail.emissiveIntensity = braking ? 3.6 : 0.6;
+    this.mats.tail.emissiveIntensity = braking ? 4.4 : 1.7;
     this.mats.reverse.emissiveIntensity = phys.reversing ? 2.8 : 0.12;
+    if (this.tailGlowMat) this.tailGlowMat.opacity = braking ? 0.8 : 0.32;
 
     // turn indicators: blink toward steering input
     this._indicatorT += dt;
@@ -501,7 +565,7 @@ export class Car {
     this._clusterAcc += dt;
     if (this._clusterAcc > 0.05) {
       this._clusterAcc = 0;
-      drawCluster(this, trans.rpmNorm, phys.speedKmh, trans.gearLabel, trans.limiterCut);
+      drawCluster(this, trans.rpmNorm, phys.speedKmh, trans.gearLabel, trans.limiterCut, race);
     }
     // ---- MMI minimap (~4 Hz) ---------------------------------------------------
     this._mmiAcc += dt;
