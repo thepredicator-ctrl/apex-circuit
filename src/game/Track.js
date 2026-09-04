@@ -120,6 +120,10 @@ export class Track {
     this._buildBoards();
     this._buildLightPoles();
     this._buildTireStacks();
+    this._buildBushes();          // NEW: low bushes scattered in the grass
+    this._buildRocks();           // NEW: rocks of varying sizes
+    this._buildDistanceSigns();   // NEW: roadside distance/corner signs
+    this._buildFence();           // NEW: chain-link fence along straights
     this._buildMountains();
     this._buildClouds();
   }
@@ -1208,6 +1212,271 @@ export class Track {
       })
     );
     this.group.add(mesh);
+  }
+
+  // ---------------------------------------------------------- NEW SCENERY ---
+  /**
+   * Low bushes scattered in the grass — instanced, varied scale/rotation/color.
+   * Uses a flattened icosahedron so each bush reads as a distinct clump, not
+   * a copy of the trees. Cheap: one draw call for ~120 instances.
+   */
+  _buildBushes() {
+    const N = this.sampleCount;
+    const half = this.roadHalfWidth;
+    const positions = [];
+    // scatter bushes in the grass, biased toward the inner side of curves
+    // (where the runoff is) and along straights
+    for (let i = 0; i < N; i += 5) {
+      for (const side of [1, -1]) {
+        if (Math.random() < 0.35) {
+          const dist = half + 3 + Math.random() * 14;
+          const x = this.px[i] + this.rightX[i] * dist * side;
+          const z = this.pz[i] + this.rightZ[i] * dist * side;
+          positions.push([x, z]);
+        }
+      }
+    }
+    if (!positions.length) return;
+
+    const bushGeo = new THREE.IcosahedronGeometry(0.5, 0);
+    bushGeo.scale(1.4, 0.7, 1.4); // flattened — reads as a low shrub
+    const bushMat = new THREE.MeshStandardMaterial({
+      color: 0xffffff, roughness: 0.95, flatShading: true
+    });
+    const mesh = new THREE.InstancedMesh(bushGeo, bushMat, positions.length);
+    const dummy = new THREE.Object3D();
+    const color = new THREE.Color();
+    const palette = [0x1a2a18, 0x1f3020, 0x16241a, 0x243a22, 0x121e15];
+
+    positions.forEach(([x, z], i) => {
+      const s = 0.5 + Math.random() * 0.9;
+      const y = this.heightAtWorld(x, z);
+      dummy.position.set(x, y + 0.25 * s, z);
+      dummy.scale.setScalar(s);
+      dummy.rotation.y = Math.random() * Math.PI * 2;
+      dummy.updateMatrix();
+      mesh.setMatrixAt(i, dummy.matrix);
+      mesh.setColorAt(i, color.setHex(palette[(Math.random() * palette.length) | 0]));
+    });
+    mesh.castShadow = false;       // bushes are too low to need shadows
+    mesh.receiveShadow = true;
+    mesh.instanceMatrix.needsUpdate = true;
+    if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
+    this.group.add(mesh);
+  }
+
+  /**
+   * Rocks of varying sizes — instanced dodecahedrons with random rotation +
+   * scale + grey-tone color variation. Placed near the runoff areas and
+   * scattered on distant hills. One draw call for ~40 rocks.
+   */
+  _buildRocks() {
+    const N = this.sampleCount;
+    const half = this.roadHalfWidth;
+    const positions = [];
+    for (let i = 0; i < N; i += 12) {
+      for (const side of [1, -1]) {
+        if (Math.random() < 0.4) {
+          const dist = half + 5 + Math.random() * 20;
+          const x = this.px[i] + this.rightX[i] * dist * side;
+          const z = this.pz[i] + this.rightZ[i] * dist * side;
+          positions.push([x, z]);
+        }
+      }
+      // a few distant rocks on the hills
+      if (Math.random() < 0.15) {
+        const ang = Math.random() * Math.PI * 2;
+        const dist = 120 + Math.random() * 80;
+        positions.push([this.px[i] + Math.cos(ang) * dist,
+                        this.pz[i] + Math.sin(ang) * dist]);
+      }
+    }
+    if (!positions.length) return;
+
+    const rockGeo = new THREE.DodecahedronGeometry(0.6, 0);
+    const rockMat = new THREE.MeshStandardMaterial({
+      color: 0xffffff, roughness: 0.92, metalness: 0.05, flatShading: true
+    });
+    const mesh = new THREE.InstancedMesh(rockGeo, rockMat, positions.length);
+    const dummy = new THREE.Object3D();
+    const color = new THREE.Color();
+    const palette = [0x3a3d42, 0x2e3035, 0x44474d, 0x252629, 0x4a4d52];
+
+    positions.forEach(([x, z], i) => {
+      const s = 0.4 + Math.random() * 1.4;
+      const y = this.heightAtWorld(x, z);
+      dummy.position.set(x, y + 0.3 * s, z);
+      dummy.scale.set(s, s * (0.7 + Math.random() * 0.5), s);
+      dummy.rotation.set(
+        Math.random() * Math.PI,
+        Math.random() * Math.PI * 2,
+        Math.random() * Math.PI
+      );
+      dummy.updateMatrix();
+      mesh.setMatrixAt(i, dummy.matrix);
+      mesh.setColorAt(i, color.setHex(palette[(Math.random() * palette.length) | 0]));
+    });
+    mesh.castShadow = true;
+    mesh.receiveShadow = true;
+    mesh.instanceMatrix.needsUpdate = true;
+    if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
+    this.group.add(mesh);
+  }
+
+  /**
+   * Roadside distance/corner signs — small posts with a colored sign face.
+   * Placed at intervals along the track, facing oncoming traffic. Instanced
+   * posts + instanced sign faces = 2 draw calls for ~30 signs.
+   */
+  _buildDistanceSigns() {
+    const N = this.sampleCount;
+    const half = this.roadHalfWidth;
+    const posts = [];
+    const signs = [];
+    const signColors = [];
+    let signIdx = 0;
+    for (let i = 0; i < N; i += 40) {
+      const side = (i % 80 === 0) ? 1 : -1;
+      const dist = half + 1.8;
+      const x = this.px[i] + this.rightX[i] * dist * side;
+      const z = this.pz[i] + this.rightZ[i] * dist * side;
+      const y = this.heightAtWorld(x, z);
+      posts.push([x, y, z]);
+      // sign face 1.6 m up, angled toward the track
+      signs.push([x, y + 1.6, z, this.tanX[i], this.tanZ[i], side]);
+      // alternate sign colors: yellow (warning), white (info), red (stop)
+      signColors.push(signIdx % 3 === 0 ? 0xe8c414 : (signIdx % 3 === 1 ? 0xf2f4f6 : 0xc62828));
+      signIdx++;
+    }
+    if (!posts.length) return;
+
+    const postGeo = new THREE.CylinderGeometry(0.05, 0.05, 1.6, 6);
+    const postMat = new THREE.MeshStandardMaterial({ color: 0x6a6e75, roughness: 0.8, metalness: 0.6 });
+    const postMesh = new THREE.InstancedMesh(postGeo, postMat, posts.length);
+    const signGeo = new THREE.BoxGeometry(0.6, 0.45, 0.04);
+    const signMat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.6, metalness: 0.1 });
+    const signMesh = new THREE.InstancedMesh(signGeo, signMat, signs.length);
+    const dummy = new THREE.Object3D();
+    const color = new THREE.Color();
+
+    posts.forEach(([x, y, z], i) => {
+      dummy.position.set(x, y + 0.8, z);
+      dummy.scale.setScalar(1);
+      dummy.rotation.set(0, 0, 0);
+      dummy.updateMatrix();
+      postMesh.setMatrixAt(i, dummy.matrix);
+    });
+    signs.forEach(([x, y, z, tx, tz, side], i) => {
+      dummy.position.set(x, y, z);
+      // face the sign toward the track (opposite of the tangent direction)
+      dummy.rotation.y = Math.atan2(tx, tz) + Math.PI / 2 * side;
+      dummy.scale.setScalar(1);
+      dummy.updateMatrix();
+      signMesh.setMatrixAt(i, dummy.matrix);
+      signMesh.setColorAt(i, color.setHex(signColors[i]));
+    });
+    for (const m of [postMesh, signMesh]) {
+      m.castShadow = true;
+      m.instanceMatrix.needsUpdate = true;
+      if (m.instanceColor) m.instanceColor.needsUpdate = true;
+      this.group.add(m);
+    }
+  }
+
+  /**
+   * Chain-link fence along long straights — a grid-textured plane repeated
+   * along the track. Cheap: one mesh per straight. Fences are placed BEHIND
+   * the tire stacks / walls so they don't interfere with collision.
+   */
+  _buildFence() {
+    const N = this.sampleCount;
+    const half = this.roadHalfWidth;
+    const segments = [];
+    let runStart = -1;
+    // find long straights (low curvature for >40 samples = ~50 m)
+    for (let i = 0; i < N; i++) {
+      const isStraight = Math.abs(this.curv[i]) < 0.015;
+      if (isStraight && runStart < 0) runStart = i;
+      else if (!isStraight && runStart >= 0) {
+        if (i - runStart > 30) segments.push([runStart, i]);
+        runStart = -1;
+      }
+    }
+    if (runStart >= 0 && N - runStart > 30) segments.push([runStart, N]);
+    if (!segments.length) return;
+
+    // build a fence canvas texture (chain-link pattern)
+    const fenceTex = canvasTexture(128, 128, (ctx, w, h) => {
+      ctx.fillStyle = '#1a1d22';
+      ctx.fillRect(0, 0, w, h);
+      ctx.strokeStyle = '#5a6068';
+      ctx.lineWidth = 1.5;
+      // diamond chain-link pattern
+      for (let y = 0; y < h; y += 12) {
+        for (let x = 0; x < w; x += 12) {
+          ctx.beginPath();
+          ctx.moveTo(x, y + 6);
+          ctx.lineTo(x + 6, y);
+          ctx.lineTo(x + 12, y + 6);
+          ctx.lineTo(x + 6, y + 12);
+          ctx.closePath();
+          ctx.stroke();
+        }
+      }
+    }, { repeat: [THREE.RepeatWrapping, THREE.RepeatWrapping] });
+
+    const fenceMat = new THREE.MeshStandardMaterial({
+      map: fenceTex,
+      color: 0x8a9098,
+      roughness: 0.7,
+      metalness: 0.4,
+      side: THREE.DoubleSide,
+      transparent: true,
+      opacity: 0.85
+    });
+
+    const dummy = new THREE.Object3D();
+    for (const [start, end] of segments) {
+      for (const side of [1, -1]) {
+        // build a fence rail along this straight on this side
+        const positions = [];
+        for (let i = start; i < end; i++) {
+          const dist = half + 4.5; // behind the tire stacks
+          const x = this.px[i] + this.rightX[i] * dist * side;
+          const z = this.pz[i] + this.rightZ[i] * dist * side;
+          const y = this.heightAtWorld(x, z);
+          positions.push([x, y, z, this.tanX[i], this.tanZ[i]]);
+        }
+        if (positions.length < 2) continue;
+        // build a BufferGeometry strip: 2 verts per sample (bottom + top)
+        const verts = [];
+        const uvs = [];
+        const indices = [];
+        const FENCE_HEIGHT = 1.8;
+        for (let i = 0; i < positions.length; i++) {
+          const [x, y, z, tx, tz] = positions[i];
+          // bottom
+          verts.push(x, y, z);
+          // top
+          verts.push(x, y + FENCE_HEIGHT, z);
+          uvs.push(i / positions.length * 8, 0);
+          uvs.push(i / positions.length * 8, 1);
+          if (i < positions.length - 1) {
+            const v0 = i * 2, v1 = i * 2 + 1, v2 = (i + 1) * 2, v3 = (i + 1) * 2 + 1;
+            indices.push(v0, v1, v2, v1, v3, v2);
+          }
+        }
+        const geo = new THREE.BufferGeometry();
+        geo.setAttribute('position', new THREE.Float32BufferAttribute(verts, 3));
+        geo.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2));
+        geo.setIndex(indices);
+        geo.computeVertexNormals();
+        const mesh = new THREE.Mesh(geo, fenceMat);
+        mesh.castShadow = false;
+        mesh.receiveShadow = true;
+        this.group.add(mesh);
+      }
+    }
   }
 
   // ------------------------------------------------------------- sampling API
