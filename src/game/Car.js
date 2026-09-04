@@ -14,12 +14,17 @@
  * Extras rigged on top of the model: physically-based headlight spotlights +
  * additive lens halos, brake-reactive rear light bar, clearcoat paint presets
  * (see PAINTS) and upgraded glass/chrome/rubber materials.
+ *
+ * NOTE: the Interior GLB (Jaguar XJ220 cockpit) is NO LONGER LOADED — the
+ * interior view was removed in favor of a hood cam, and skipping the GLB
+ * saves ~2 MB of bandwidth + a lot of GPU time on iPad. The fallback
+ * cockpit anchor is kept (harmless) so any code referencing it doesn't
+ * crash, but the camera rig no longer reads it.
  */
 
 import * as THREE from 'three';
 import { CAR, SUSPENSION, HEADLIGHTS, PAINTS } from './Constants.js';
 import { loadGLB, toFloat32Geometry, keepTriangles, stripExtras } from './ModelKit.js';
-import { buildInterior } from './Interior.js';
 
 export class Car {
   constructor(track = null) {
@@ -35,10 +40,9 @@ export class Car {
     this.model.add(this.body);
 
     // ---- defensive cockpit anchor -----------------------------------------
-    // A default eye position so the camera rig never reads `undefined` before
-    // the Interior GLB finishes loading (or if it fails entirely on iPad
-    // Safari). buildInterior() / _buildFallbackCockpit() will overwrite this
-    // with the proper anchor once assets are rigged.
+    // Kept for backwards-compat (HUD code references cockpitMode etc.) but
+    // the camera rig no longer reads this — the hood cam computes its own
+    // position from phys.position + heading.
     this.cockpitAnchor = new THREE.Object3D();
     this.cockpitAnchor.position.set(-0.05, 1.02, -0.33);
     this.body.add(this.cockpitAnchor);
@@ -60,26 +64,23 @@ export class Car {
   }
 
   /**
-   * Load + rig everything. Call once; resolves after the car, interior and
-   * cockpit systems are attached and `ready` is true.
+   * Load + rig everything. Call once; resolves after the car is rigged and
+   * `ready` is true. The Interior GLB is intentionally NOT loaded — the
+   * hood camera doesn't need it, and skipping it saves bandwidth + GPU.
    */
   async build(onProgress) {
-    // progress: car is the big one (~75% of the wait), interior the rest
+    // car is now the entire load (no interior GLB)
     const carScene = await loadGLB('./models/porsche_911.glb',
-      (t) => onProgress && onProgress(t * 0.8));
+      (t) => onProgress && onProgress(t));
 
     this._buildBaseMaterials();
     this._prepareExterior(carScene);
     this._rigWheels(carScene);
     this._buildLights();
 
-    // interior (own GLB) — attaches cockpit, screens, animated steering wheel
-    try {
-      await buildInterior(this, onProgress);
-    } catch (err) {
-      console.warn('[ApexCircuit] Interior model failed, continuing without it:', err);
-      this._buildFallbackCockpit();
-    }
+    // skip the Interior GLB entirely — the hood cam doesn't need it.
+    // Build a minimal fallback cockpit anchor so old code paths don't crash.
+    this._buildFallbackCockpit();
 
     this.ready = true;
     if (onProgress) onProgress(1);
@@ -238,9 +239,14 @@ export class Car {
 
     // mount: glTF nose +Z -> model space nose +X
     scene.rotation.y = Math.PI / 2;
-    // raise so the tires rest on y = 0 (measured from the wheel pivots)
-    const lift = 0.565;
-    scene.position.y = lift;
+    // raise so the tires rest on y = 0. The lift is computed from the actual
+    // wheel radius (measured in _rigWheels from the tire bbox) so the wheels
+    // always sit on the ground regardless of model scale. We set a placeholder
+    // here and let _rigWheels update scene.position.y once it measures the
+    // true radius. (The old hardcoded 0.565 was tuned for one specific model
+    // scale and left wheels floating when the radius was different.)
+    this._pendingLift = null;
+    scene.position.y = 0;
     this.carRoot = scene;
     this.body.add(scene);
 
@@ -331,23 +337,47 @@ export class Car {
       axle.updateMatrixWorld(true);
       axle.traverse((o) => { if (o.isMesh) meshes.push(o); });
 
-      // axle center from the tire mesh's world origin
+      // find the tire mesh (rubber material) — its bbox gives us the true
+      // wheel hub + radius. We use the BBOX CENTER (not the node origin)
+      // because some FBX pipelines offset the tire geometry inside the mesh
+      // node, so the node origin sits on the axle pivot but the visible
+      // wheel center is elsewhere.
       let tireMesh = null;
       for (const o of meshes) {
         if (o.material && o.material.name === 'rubber') tireMesh = o;
       }
-      const centerLocal = new THREE.Vector3()
-        .setFromMatrixPosition(tireMesh.matrixWorld)
-        .applyMatrix4(inv);
 
-      // tire radius (visual) from the full tire bbox
+      let measuredRadius = CAR.wheelRadius;
+      const centerLocal = new THREE.Vector3();
       {
         const g = toFloat32Geometry(tireMesh.geometry);
         g.applyMatrix4(new THREE.Matrix4().multiplyMatrices(inv, tireMesh.matrixWorld));
         g.computeBoundingBox();
         const size = g.boundingBox.getSize(new THREE.Vector3());
-        this.wheelRadius = Math.max(0.2, (size.y + size.z) / 4);
+        // tire bbox: the wheel's circular cross-section lies in the Y-Z plane
+        // (axle along X). Diameter = max(size.y, size.z); radius = half.
+        measuredRadius = Math.max(0.2, Math.max(size.y, size.z) / 2);
+        // bbox center in scene-local space — this is the TRUE wheel hub
+        centerLocal.copy(g.boundingBox.min).add(g.boundingBox.max).multiplyScalar(0.5);
         g.dispose();
+      }
+      // Use the FRONT axle's measured radius as the canonical one (front and
+      // rear should be the same on a 911, but if they differ the front is
+      // usually the larger one and we want the wheels to rest on the ground).
+      if (key === 'front' || !this.wheelRadius || this.wheelRadius === CAR.wheelRadius) {
+        this.wheelRadius = measuredRadius;
+      }
+
+      // ---- compute the scene lift so wheels rest on y = 0 -----------------
+      // The wheel pivot is at centerLocal.y in scene-local space (post-rotation).
+      // To put the wheel bottom (pivot.y - radius) at y = 0, the scene needs
+      // to be lifted by (radius - centerLocal.y). We pick the lowest axle
+      // (front OR rear, whichever has the smaller centerLocal.y - radius)
+      // so neither axle clips through the ground.
+      const axleBottom = centerLocal.y - measuredRadius;
+      const requiredLift = -axleBottom; // makes axleBottom + lift = 0
+      if (this._pendingLift === null || requiredLift > this._pendingLift) {
+        this._pendingLift = requiredLift;
       }
 
       for (const side of [1, -1]) {
@@ -370,32 +400,19 @@ export class Car {
           g.dispose();
         }
 
-        // TRUE per-wheel hub: bounding-box CENTROID of the tire half in
-        // scene space. The previous code used the merged-axle tire centroid
-        // which sat on x=0 (between the two wheels) — that placed every
-        // wheel slightly inboard of its true hub, so the rims overlapped
-        // the brake discs and the tires poked through the arches.
-        let hubX = centerLocal.x * side;
-        let hubY = centerLocal.y;
-        let hubZ = centerLocal.z;
+        // wheel center x = centroid of this side's tire half
+        let xHalf = centerLocal.x;
         const rub = halves.find((h) => h.material.name === 'rubber');
         if (rub) {
           rub.geometry.computeBoundingBox();
-          const bb = rub.geometry.boundingBox;
-          // x centroid of the kept half = midpoint of that half's tire bbox
-          hubX = (bb.min.x + bb.max.x) / 2;
-          hubY = (bb.min.y + bb.max.y) / 2;
-          hubZ = (bb.min.z + bb.max.z) / 2;
+          xHalf = (rub.geometry.boundingBox.min.x + rub.geometry.boundingBox.max.x) / 2;
         }
-        wheelRoot.position.set(hubX, hubY, hubZ);
+        wheelRoot.position.set(xHalf, centerLocal.y, centerLocal.z);
 
         for (const h of halves) {
           const mm = new THREE.Mesh(h.geometry, h.material);
           mm.castShadow = true;
-          // mesh offset relative to wheel root: subtract the hub so the
-          // geometry sits exactly where it was authored, with the wheel
-          // center now at the origin of `wheelRoot`
-          mm.position.set(-hubX, -hubY, -hubZ);
+          mm.position.set(-xHalf, -centerLocal.y, -centerLocal.z);
           if (h.isCaliper) steer.add(mm);   // caliper steers, never spins
           else spin.add(mm);
         }
@@ -405,10 +422,7 @@ export class Car {
           steerGroup: steer, suspGroup: susp, spinGroup: spin,
           spinAxis: 'x',                     // glTF frame: axle along X
           front: key === 'front',
-          side,
-          // body-space hub (used for well-liner placement + suspension
-          // ground-truth in the new physics)
-          hubLocal: new THREE.Vector3(hubX, hubY, hubZ)
+          side
         });
       }
 
@@ -417,6 +431,11 @@ export class Car {
 
     // order wheels FL, FR, RL, RR to match phys.suspSmooth indices
     this.wheels.sort((a, b) => (b.front - a.front) || (a.side - b.side));
+
+    // apply the computed scene lift so the wheels rest on y = 0
+    if (this._pendingLift !== null && this.carRoot) {
+      this.carRoot.position.y = this._pendingLift;
+    }
 
     // well liners behind each wheel
     const liners = [];
@@ -471,33 +490,21 @@ export class Car {
     this.group.position.set(phys.position.x, phys.position.y + 0.02, phys.position.z);
     this.group.rotation.y = phys.heading;
 
-    // smoothed steer angle for the visual front wheels (phys.steerAngle is
-    // already the average of FL+FR Ackermann-corrected steer from the new
-    // sim physics — damp it for visual smoothness)
+    // ---- wheels: spin (vF / true radius), steer, suspension travel --------
+    const R = this.wheelRadius || CAR.wheelRadius;
+    let spinRate = phys.vF / R;
+    if (phys.wheelspin && trans.gear > 0) spinRate += 26;
+    if (trans.wheelspin && trans.gear < 0) spinRate -= 14;
+    this._spinAngle -= spinRate * dt;
+
     const steerTarget = -phys.steerAngle;
     this._steerVis = THREE.MathUtils.damp(this._steerVis, steerTarget, 12, dt);
 
-    // ---- wheels: spin (driven wheels use phys.wheelOmega; non-driven use vF/r),
-    //      steer, suspension travel ----------------------------------------------
-    // The new physics model tracks per-wheel angular velocity independently,
-    // so we read it directly instead of recomputing vF/r here. This makes the
-    // wheels spin up under wheelspin, lock under braking, and free-roll at
-    // the right rate when coasting.
-    const R = this.wheelRadius || CAR.wheelRadius;
     const susp = phys.suspSmooth;
-    const wheelOmega = [
-      phys.wheelOmega[0] !== undefined ? phys.wheelOmega[0] : phys.vF / R,
-      phys.wheelOmega[1] !== undefined ? phys.wheelOmega[1] : phys.vF / R,
-      phys.wheelOmega[2] !== undefined ? phys.wheelOmega[2] : phys.vF / R,
-      phys.wheelOmega[3] !== undefined ? phys.wheelOmega[3] : phys.vF / R
-    ];
-    if (!this._spinAnglePerWheel) this._spinAnglePerWheel = [0, 0, 0, 0];
-    for (let i = 0; i < 4; i++) {
+    for (let i = 0; i < this.wheels.length; i++) {
       const w = this.wheels[i];
-      if (!w) continue;
-      this._spinAnglePerWheel[i] -= wheelOmega[i] * dt;
-      if (w.spinAxis === 'x') w.spinGroup.rotation.x = this._spinAnglePerWheel[i];
-      else w.spinGroup.rotation.z = this._spinAnglePerWheel[i];
+      if (w.spinAxis === 'x') w.spinGroup.rotation.x = this._spinAngle;
+      else w.spinGroup.rotation.z = this._spinAngle;
       if (w.front) w.steerGroup.rotation.y = this._steerVis;
       const travel = (susp[i] - 0.5) * 2 * SUSPENSION.travel;
       w.suspGroup.position.y = travel;
