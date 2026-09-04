@@ -63,21 +63,25 @@ export class Game {
     // ---- renderer --------------------------------------------------------
     // iOS Safari (iPadOS 16+) can refuse WebGL contexts that demand a real
     // GPU, so we DO NOT set failIfMajorPerformanceCaveat. We also keep
-    // antialias off on phones (huge fill-rate cost) and on when the device
-    // looks like an iPad or desktop.
+    // antialias off on phones AND on iPads (iPad Pros have 3x screens —
+    // 2 Mpix at 1.6 DPR + MSAA is what was killing the framerate).
     const isPhone = this.isMobile && !this.isIPad;
     this.renderer = new THREE.WebGLRenderer({
-      antialias: !isPhone,
+      antialias: false,                      // FX via DPR, not MSAA — much cheaper
       powerPreference: 'high-performance',
       failIfMajorPerformanceCaveat: false,
       stencil: false,
-      depth: true
+      depth: true,
+      preserveDrawingBuffer: false
     });
-    // iPad screens are dense (3x); cap at 2 for perf, 1.5 on phones.
-    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, isPhone ? 1.5 : 2));
+    // cap the device pixel ratio aggressively — the previous 1.6+ cap meant
+    // rendering 4+ MP per frame on iPad Pro, which the GPU couldn't sustain
+    // alongside shadow mapping + the instanced tree forest.
+    const dprCap = isPhone ? 1.4 : (this.isIPad ? 1.6 : 2.0);
+    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, dprCap));
     this.renderer.setSize(window.innerWidth, window.innerHeight);
     this.renderer.shadowMap.enabled = true;
-    this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    this.renderer.shadowMap.type = THREE.PCFShadowMap;       // cheaper than PCFSoft
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
     this.renderer.toneMappingExposure = 1.18;
     this.container.appendChild(this.renderer.domElement);

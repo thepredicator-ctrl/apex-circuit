@@ -370,19 +370,32 @@ export class Car {
           g.dispose();
         }
 
-        // wheel center x = centroid of this side's tire half
-        let xHalf = centerLocal.x;
+        // TRUE per-wheel hub: bounding-box CENTROID of the tire half in
+        // scene space. The previous code used the merged-axle tire centroid
+        // which sat on x=0 (between the two wheels) — that placed every
+        // wheel slightly inboard of its true hub, so the rims overlapped
+        // the brake discs and the tires poked through the arches.
+        let hubX = centerLocal.x * side;
+        let hubY = centerLocal.y;
+        let hubZ = centerLocal.z;
         const rub = halves.find((h) => h.material.name === 'rubber');
         if (rub) {
           rub.geometry.computeBoundingBox();
-          xHalf = (rub.geometry.boundingBox.min.x + rub.geometry.boundingBox.max.x) / 2;
+          const bb = rub.geometry.boundingBox;
+          // x centroid of the kept half = midpoint of that half's tire bbox
+          hubX = (bb.min.x + bb.max.x) / 2;
+          hubY = (bb.min.y + bb.max.y) / 2;
+          hubZ = (bb.min.z + bb.max.z) / 2;
         }
-        wheelRoot.position.set(xHalf, centerLocal.y, centerLocal.z);
+        wheelRoot.position.set(hubX, hubY, hubZ);
 
         for (const h of halves) {
           const mm = new THREE.Mesh(h.geometry, h.material);
           mm.castShadow = true;
-          mm.position.set(-xHalf, -centerLocal.y, -centerLocal.z);
+          // mesh offset relative to wheel root: subtract the hub so the
+          // geometry sits exactly where it was authored, with the wheel
+          // center now at the origin of `wheelRoot`
+          mm.position.set(-hubX, -hubY, -hubZ);
           if (h.isCaliper) steer.add(mm);   // caliper steers, never spins
           else spin.add(mm);
         }
@@ -392,7 +405,10 @@ export class Car {
           steerGroup: steer, suspGroup: susp, spinGroup: spin,
           spinAxis: 'x',                     // glTF frame: axle along X
           front: key === 'front',
-          side
+          side,
+          // body-space hub (used for well-liner placement + suspension
+          // ground-truth in the new physics)
+          hubLocal: new THREE.Vector3(hubX, hubY, hubZ)
         });
       }
 
@@ -455,21 +471,33 @@ export class Car {
     this.group.position.set(phys.position.x, phys.position.y + 0.02, phys.position.z);
     this.group.rotation.y = phys.heading;
 
-    // ---- wheels: spin (vF / true radius), steer, suspension travel --------
-    const R = this.wheelRadius || CAR.wheelRadius;
-    let spinRate = phys.vF / R;
-    if (phys.wheelspin && trans.gear > 0) spinRate += 26;
-    if (trans.wheelspin && trans.gear < 0) spinRate -= 14;
-    this._spinAngle -= spinRate * dt;
-
+    // smoothed steer angle for the visual front wheels (phys.steerAngle is
+    // already the average of FL+FR Ackermann-corrected steer from the new
+    // sim physics — damp it for visual smoothness)
     const steerTarget = -phys.steerAngle;
     this._steerVis = THREE.MathUtils.damp(this._steerVis, steerTarget, 12, dt);
 
+    // ---- wheels: spin (driven wheels use phys.wheelOmega; non-driven use vF/r),
+    //      steer, suspension travel ----------------------------------------------
+    // The new physics model tracks per-wheel angular velocity independently,
+    // so we read it directly instead of recomputing vF/r here. This makes the
+    // wheels spin up under wheelspin, lock under braking, and free-roll at
+    // the right rate when coasting.
+    const R = this.wheelRadius || CAR.wheelRadius;
     const susp = phys.suspSmooth;
-    for (let i = 0; i < this.wheels.length; i++) {
+    const wheelOmega = [
+      phys.wheelOmega[0] !== undefined ? phys.wheelOmega[0] : phys.vF / R,
+      phys.wheelOmega[1] !== undefined ? phys.wheelOmega[1] : phys.vF / R,
+      phys.wheelOmega[2] !== undefined ? phys.wheelOmega[2] : phys.vF / R,
+      phys.wheelOmega[3] !== undefined ? phys.wheelOmega[3] : phys.vF / R
+    ];
+    if (!this._spinAnglePerWheel) this._spinAnglePerWheel = [0, 0, 0, 0];
+    for (let i = 0; i < 4; i++) {
       const w = this.wheels[i];
-      if (w.spinAxis === 'x') w.spinGroup.rotation.x = this._spinAngle;
-      else w.spinGroup.rotation.z = this._spinAngle;
+      if (!w) continue;
+      this._spinAnglePerWheel[i] -= wheelOmega[i] * dt;
+      if (w.spinAxis === 'x') w.spinGroup.rotation.x = this._spinAnglePerWheel[i];
+      else w.spinGroup.rotation.z = this._spinAnglePerWheel[i];
       if (w.front) w.steerGroup.rotation.y = this._steerVis;
       const travel = (susp[i] - 0.5) * 2 * SUSPENSION.travel;
       w.suspGroup.position.y = travel;

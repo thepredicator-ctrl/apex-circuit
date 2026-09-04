@@ -132,16 +132,22 @@ export class Environment {
     const hemi = new THREE.HemisphereLight(WORLD.hemiSky, WORLD.hemiGround, WORLD.hemiIntensity);
     this.scene.add(hemi);
 
-    // moonlight — the single shadow caster, cold and hard
+    // moonlight — the single shadow caster, cold and hard.
+    // Shadow map size scales with the QUALITY preset (set in Game._applyQuality),
+    // but the cap here is also lowered for mobile / iPad so the shadow pass
+    // doesn't dominate frame time on 3x retina screens.
     const sun = new THREE.DirectionalLight(WORLD.sunColor, WORLD.sunIntensity);
     sun.position.set(...WORLD.sunDirection).multiplyScalar(150);
     sun.castShadow = true;
-    const shadowSize = this.isMobile ? 1024 : 2048;
+    const shadowSize = this.isMobile ? 1024 : 1536;
     sun.shadow.mapSize.set(shadowSize, shadowSize);
-    sun.shadow.camera.left = -60;
-    sun.shadow.camera.right = 60;
-    sun.shadow.camera.top = 60;
-    sun.shadow.camera.bottom = -60;
+    // tighten the shadow frustum — 120 m was overkill; 80 m still covers the
+    // visible track ahead and roughly halves shadow-pass fill rate.
+    const FRUST = this.isMobile ? 50 : 70;
+    sun.shadow.camera.left = -FRUST;
+    sun.shadow.camera.right = FRUST;
+    sun.shadow.camera.top = FRUST;
+    sun.shadow.camera.bottom = -FRUST;
     sun.shadow.camera.near = 30;
     sun.shadow.camera.far = 340;
     sun.shadow.bias = -0.0004;
