@@ -1,39 +1,21 @@
 /**
- * VehiclePhysics — simulation-grade vehicle dynamics.
+ * Vehicle physics — arcade/sim hybrid.
  *
- * This is a real tire-model simulation, not an arcade yaw-rate cap:
+ * Longitudinal: real engine torque flows through the Transmission (gear
+ * ratios, final drive, clutch, rev limiter). Drive force is applied at the
+ * rear axle and capped by rear traction; excess spins the wheels.
  *
- *   - Per-wheel vertical load: static load + longitudinal load transfer
- *     (aLong * CGheight / wheelbase) + lateral load transfer
- *     (aLat * CGheight / trackWidth) per axle, plus aerodynamic downforce
- *     distributed 45/55 F/R. Each wheel's load is computed independently.
+ * Lateral: per-axle grip = mu * axle load. Longitudinal load transfer
+ * (accel/brake), lateral load transfer (cornering), aerodynamic downforce
+ * and surface type all shift axle loads, so braking deep into a corner
+ * loosens the rear, power loosens it under throttle, and the handbrake
+ * unglues it completely. When the demanded lateral force exceeds what the
+ * tires can give, the surplus survives as slide velocity — controllable
+ * drifting with counter-steer.
  *
- *   - Pacejka Magic Formula (simplified) for combined slip:
- *       F_x = D_x * sin(C_x * atan(B_x * kappa - E_x * (B_x * kappa - atan(B_x * kappa))))
- *       F_y = D_y * sin(C_y * atan(B_y * alpha - E_y * (B_y * alpha - atan(B_y * alpha))))
- *     where kappa = longitudinal slip ratio, alpha = slip angle.
- *     Combined forces are resolved with the friction-circle method
- *     (Beckmann): the demands are scaled so the resultant vector stays
- *     inside the tire's load-dependent friction ellipse.
- *
- *   - Slip ratios are computed from wheel angular velocity (driven wheels
- *     get torque from the transmission; non-driven wheels free-roll).
- *     Slip angles come from the body's velocity vector at each wheel hub.
- *
- *   - Yaw is integrated from the sum of tire lateral forces × moment arm
- *     around the CG, with a small inertial damping term. No artificial
- *     "maxYaw" cap — the car will spin if you exceed the grip circle.
- *
- *   - Brake bias is fixed at 60/40 F/R (typical 911 setup with rear-biased
- *     engine weight). Handbrake locks the rear axle (kappa → -1).
- *
- *   - Surfaces: asphalt mu ~1.4 (with the Pacejka D multiplier), grass
- *     mu ~0.45, curb mu ~1.0 (no penalty, just bump jitter).
- *
- * The model is intentionally compact (~250 lines) but covers every effect
- * that makes a car feel like a car: weight transfer, lift-off oversteer,
- * trail-braking rotation, throttle-on power oversteer, handbrake drifts,
- * and proper limited-slip behavior (driven axle solidly linked).
+ * Vertical: the track provides surface height (rolling hills + banking).
+ * The body rides the surface; per-wheel suspension compression targets are
+ * computed here and animated by Car with spring/damper smoothing.
  */
 
 import * as THREE from 'three';
@@ -41,48 +23,17 @@ import { CAR, TRACK } from './Constants.js';
 
 const _fwd0 = new THREE.Vector3();
 const _right0 = new THREE.Vector3();
+const _fwd1 = new THREE.Vector3();
+const _right1 = new THREE.Vector3();
 const _vel = new THREE.Vector3();
+
+// right = forward x up (matches the on-screen camera convention)
+function rightOf(fwd, out) {
+  return out.set(-fwd.z, 0, fwd.x);
+}
 
 const clamp = THREE.MathUtils.clamp;
 const damp = THREE.MathUtils.damp;
-
-// ---- Pacejka Magic Formula (simplified, sport-touring car) ----------------
-// These constants are tuned for a 1180 kg rear-engined sports car on 245-series
-// tires. D = peak (multiplied by load), C = shape, B = stiffness, E = curvature.
-const PACEJKA_LONG = { B: 8.0, C: 1.65, D: 1.10, E: 0.97 };
-const PACEJKA_LAT  = { B: 9.0, C: 1.45, D: 1.18, E: 0.98 };
-
-/** Pure Pacejka: F/D = sin(C * atan(B*x - E*(B*x - atan(B*x)))) */
-function pacejka(x, p) {
-  const Bx = p.B * x;
-  return p.D * Math.sin(p.C * Math.atan(Bx - p.E * (Bx - Math.atan(Bx))));
-}
-
-/**
- * Combined slip (friction circle / Beckmann): given desired longitudinal
- * force Fx0 and lateral Fy0 (both as multiples of vertical load), and a
- * friction multiplier mu, scale them so the resultant stays inside the
- * ellipse: |Fx|/muFx_max + (Fy/Fy_max)^2 <= 1 (simplified to a circle when
- * muFx_max = Fy_max, which is close enough for our purposes).
- *
- * Returns { Fx, Fy } as fractions of vertical load.
- */
-function combinedSlip(kappa, alpha, mu) {
-  const fx0 = pacejka(kappa, PACEJKA_LONG);
-  const fy0 = pacejka(alpha, PACEJKA_LAT);
-  const fxAbs = Math.abs(fx0);
-  const fyAbs = Math.abs(fy0);
-  const total = Math.sqrt(fxAbs * fxAbs + fyAbs * fyAbs);
-  // friction circle: cap the resultant at the tire's peak
-  const cap = mu;
-  let scale = 1;
-  if (total > cap) scale = cap / total;
-  return { Fx: fx0 * scale, Fy: fy0 * scale };
-}
-
-// ---- per-wheel state ------------------------------------------------------
-// 0=FL, 1=FR, 2=RL, 3=RR
-const WHEEL_NAMES = ['FL', 'FR', 'RL', 'RR'];
 
 export class VehiclePhysics {
   constructor(track, transmission) {
@@ -92,53 +43,42 @@ export class VehiclePhysics {
     this.position = new THREE.Vector3();
     this.heading = 0;            // rad, 0 = +Z, forward = (sin h, 0, cos h)
     this.velocity = new THREE.Vector3();
-    this.yawRate = 0;            // rad/s
 
     // telemetry
-    this.vF = 0;
-    this.vL = 0;
-    this.slip = 0;
-    this.latAccel = 0;
-    this.aLongS = 0;
-    this.steerAngle = 0;
+    this.vF = 0;                 // forward speed (m/s, signed)
+    this.vL = 0;                 // lateral speed (m/s, + = sliding toward car-right)
+    this.slip = 0;               // |lateral speed| — drives smoke & screech
+    this.latAccel = 0;           // smoothed lateral accel — drives body roll
+    this.aLongS = 0;             // smoothed longitudinal accel (m/s^2)
+    this.steerAngle = 0;         // visual front wheel angle (rad)
     this.throttleOut = 0;
     this.brakeOut = 0;
     this.reversing = false;
-    this.wheelspin = false;
-    this.engineForce = 0;
+    this.wheelspin = false;      // rear traction exceeded this step
+    this.engineForce = 0;        // post-traction-cap drive force (telemetry)
 
     // surface telemetry
     this.sampleIdx = 0;
-    this.s = 0;
-    this.lateral = 0;
+    this.s = 0;                  // progress 0..1 around the circuit
+    this.lateral = 0;            // signed distance from centerline (+ = right)
     this.onGrass = false;
     this.onCurb = false;
     this.onRoad = true;
-    this.surfaceY = 0;
-    this.roadPitch = 0;
-    this.roadRoll = 0;
+    this.surfaceY = 0;           // road height under the car (incl. banking)
+    this.roadPitch = 0;          // surface slope under the car (rad, + = uphill)
+    this.roadRoll = 0;           // bank tilt in the car frame (rad, + = right low)
 
-    // per-wheel arrays (length 4, FL/FR/RL/RR)
-    this.wheelLoad = [0, 0, 0, 0];        // N vertical load
-    this.wheelSlipKappa = [0, 0, 0, 0];   // longitudinal slip ratio (-1..1)
-    this.wheelSlipAlpha = [0, 0, 0, 0];   // lateral slip angle (rad)
-    this.wheelOmega = [0, 0, 0, 0];       // angular velocity (rad/s)
-    this.wheelFx = [0, 0, 0, 0];          // longitudinal force (N)
-    this.wheelFy = [0, 0, 0, 0];          // lateral force (N)
-
+    // per-wheel suspension compression targets (0..1), FL FR RL RR
     this.susp = [0.5, 0.5, 0.5, 0.5];
     this._suspSmooth = [0.5, 0.5, 0.5, 0.5];
     this._bumpPhase = 0;
 
-    this.justHitWall = false;
+    this._yaw = 0;
+    this.justHitWall = false;    // one-frame flag for effects/audio
     this._time = 0;
-
-    // derived geometry from CAR constants
-    this._halfWB = CAR.wheelbase / 2;
-    this._halfTrack = CAR.trackWidth / 2;
-    this._invInertia = 1 / CAR.yawInertia; // 1/(kg·m²)
   }
 
+  /** Place the car at track progress s (0..1), `lateralOffset` meters right of center. */
   placeAt(s, lateralOffset = 0) {
     const p = this.track.pointAt(s);
     const tan = this.track.tangentAt(s);
@@ -152,10 +92,7 @@ export class VehiclePhysics {
     this.slip = 0;
     this.latAccel = 0;
     this.aLongS = 0;
-    this.yawRate = 0;
-    this.wheelOmega = [0, 0, 0, 0];
-    this.wheelSlipKappa = [0, 0, 0, 0];
-    this.wheelSlipAlpha = [0, 0, 0, 0];
+    this._yaw = 0;
     const loc = this.track.locate(this.position.x, this.position.z, null);
     this.sampleIdx = loc.idx;
     this.s = loc.s;
@@ -169,18 +106,23 @@ export class VehiclePhysics {
     this._suspSmooth = [0.5, 0.5, 0.5, 0.5];
   }
 
+  /** Compute surface height + attitude under the car from a located sample. */
   _applySurface(loc) {
     const surf = this.track.surfaceAt(loc.idx, this.lateral);
     this.surfaceY = surf.y;
+    // project track-frame slope/bank into the car frame
     const fwdX = Math.sin(this.heading), fwdZ = Math.cos(this.heading);
-    const along = fwdX * loc.tanX + fwdZ * loc.tanZ;
-    const across = fwdX * loc.rightX + fwdZ * loc.rightZ;
+    const along = fwdX * loc.tanX + fwdZ * loc.tanZ;      // ~1 when pointing down the track
+    const across = fwdX * loc.rightX + fwdZ * loc.rightZ; // ~1 when pointing across
     this.roadPitch = Math.atan(surf.slope * along);
     this.roadRoll = Math.atan(surf.bankSlope) * across;
   }
 
   /**
-   * Advance one physics sub-step (dt seconds).
+   * Advance one physics sub-step.
+   * @param {number} dt      sub-step delta (e.g. 1/120)
+   * @param {Input}  input   input provider with `.state`
+   * @param {boolean} controlsActive  false during countdown / after finish
    */
   update(dt, input, controlsActive) {
     this.justHitWall = false;
@@ -189,21 +131,21 @@ export class VehiclePhysics {
     const throttle = controlsActive ? input.state.throttle : 0;
     const driverBrake = controlsActive ? input.state.brake : 0;
     const holdStill = !controlsActive;
-    const steerInput = controlsActive ? input.state.steer : 0;
+    const steer = controlsActive ? input.state.steer : 0;
     const handbrake = controlsActive && input.state.handbrake;
     this.throttleOut = throttle;
     this.brakeOut = driverBrake;
 
-    // --- body-frame basis vectors -----------------------------------------
+    // --- current frame ---------------------------------------------------
     _fwd0.set(Math.sin(this.heading), 0, Math.cos(this.heading));
-    _right0.set(-_fwd0.z, 0, _fwd0.x);
+    rightOf(_fwd0, _right0);
 
-    const vF = this.velocity.dot(_fwd0);
-    const vL = this.velocity.dot(_right0);
-    const vF0 = vF;
-    const vAbs = Math.hypot(vF, vL);
+    // --- decompose ---------------------------------------------------------
+    let vF = this.velocity.dot(_fwd0);
+    let vL0 = this.velocity.dot(_right0);
+    const vF0 = vF;   // speed at step start — used for the acceleration estimate
 
-    // --- surface lookup ---------------------------------------------------
+    // --- surface lookup -----------------------------------------------------
     const roadHalf = TRACK.roadHalfWidth;
     const loc = this.track.locate(this.position.x, this.position.z, this.sampleIdx);
     this.sampleIdx = loc.idx;
@@ -215,7 +157,7 @@ export class VehiclePhysics {
     this.onRoad = !this.onGrass;
     this._applySurface(loc);
 
-    // --- transmission (updates wheel torque for driven wheels) ------------
+    // --- transmission ----------------------------------------------------------
     this.trans.update(dt, {
       wheelSpeed: vF,
       throttle,
@@ -223,199 +165,139 @@ export class VehiclePhysics {
       controlsActive
     });
 
-    // --- per-wheel hub velocities (body frame) ----------------------------
-    // wheel hub positions relative to CG (body frame: +X = forward, +Y = right)
-    // FL/FR are front (-X), RL/RR are rear (+X); left/right on ±Y.
-    // hubVel = vCG + omega × r
-    const yaw = this.yawRate;
-    // hub velocities in body frame
-    const hubVel = [
-      // [vx_body, vy_body] = [vF, vL] + [-yaw * y_hub, yaw * x_hub]
-      { vx: vF - yaw * (-this._halfTrack), vy: vL + yaw * (-this._halfWB) }, // FL (x=-halfWB, y=-halfTrack)
-      { vx: vF - yaw * ( this._halfTrack), vy: vL + yaw * (-this._halfWB) }, // FR (x=-halfWB, y=+halfTrack)
-      { vx: vF - yaw * (-this._halfTrack), vy: vL + yaw * ( this._halfWB) }, // RL (x=+halfWB, y=-halfTrack)
-      { vx: vF - yaw * ( this._halfTrack), vy: vL + yaw * ( this._halfWB) }  // RR (x=+halfWB, y=+halfTrack)
-    ];
-
-    // --- vertical loads (load transfer + downforce) -----------------------
+    // --- axle loads (weight transfer + downforce) -----------------------------
     const m = CAR.mass;
     const g = 9.81;
-    const df = CAR.downforce * vF * vF;     // N total downforce
-    // longitudinal load transfer (front <-> rear)
+    const vAbs = Math.abs(vF);
+    const df = CAR.downforce * vF * vF;              // downforce N
+    const staticF = m * g * CAR.weightDistFront;
+    const staticR = m * g * (1 - CAR.weightDistFront);
+    // aLongS from last step drives the transfer (stable one-step lag)
     const longXfer = m * this.aLongS * CAR.cgHeight / CAR.wheelbase;
-    // lateral load transfer (left <-> right) — total, distributed by axle
-    const latXferTotal = m * this.latAccel * CAR.cgHeight / CAR.trackWidth;
-    // per-axle distribution: 911 has more rear weight, so rear takes more lat transfer
-    const latXferFront = latXferTotal * CAR.weightDistFront;
-    const latXferRear = latXferTotal * (1 - CAR.weightDistFront);
+    const loadF = Math.max(m * g * 0.18, staticF - longXfer + df * 0.45);
+    const loadR = Math.max(m * g * 0.18, staticR + longXfer + df * 0.55);
 
-    const staticF = m * g * CAR.weightDistFront / 2;     // per front wheel
-    const staticR = m * g * (1 - CAR.weightDistFront) / 2; // per rear wheel
-    const dfFront = df * 0.45 / 2;
-    const dfRear = df * 0.55 / 2;
+    // --- per-axle mu -----------------------------------------------------------
+    const muBase = this.onGrass ? CAR.gripGrass : CAR.gripAsphalt;
+    let muF = muBase;
+    let muR = muBase;
+    // traction loss at high steering angle + speed (front washout)
+    if (Math.abs(steer) > 0.85 && vAbs > 24) muF *= CAR.highSteerGripFactor;
+    // power oversteer: hard throttle mid-corner loosens the rear
+    if (throttle > 0.85 && Math.abs(steer) > 0.55 && vAbs > 13) muR *= CAR.powerOversteerFactor;
+    if (handbrake) muR *= CAR.handbrakeRearGrip;
+    if (this.onGrass) { muF *= 0.8; muR *= 0.8; }
 
-    // sign convention: aLongS > 0 = accelerating (load shifts REAR)
-    // latAccel > 0 = turning left (load shifts RIGHT)
-    // yawRate > 0 = turning left (matches)
-    const latSign = (this.latAccel >= 0) ? 1 : -1;
-    this.wheelLoad[0] = Math.max(m * g * 0.05, staticF - longXfer / 2 + dfFront - latXferFront / 2 * latSign);  // FL
-    this.wheelLoad[1] = Math.max(m * g * 0.05, staticF - longXfer / 2 + dfFront + latXferFront / 2 * latSign);  // FR
-    this.wheelLoad[2] = Math.max(m * g * 0.05, staticR + longXfer / 2 + dfRear - latXferRear / 2 * latSign);    // RL
-    this.wheelLoad[3] = Math.max(m * g * 0.05, staticR + longXfer / 2 + dfRear + latXferRear / 2 * latSign);    // RR
+    const gripFront = muF * loadF / m;   // m/s^2 the front axle can support
+    const gripRear = muR * loadR / m;
+    // Total lateral capability of the CAR (both axles share the cornering
+    // force): mu * effective gravity incl. downforce. Using only the weaker
+    // axle here would halve real grip and cause massive understeer.
+    const gEff = g + (CAR.downforce * vF * vF) / m;
+    const lateralCap = Math.min(muF, muR) * gEff;
+    // Yaw authority stays at NOMINAL grip: a slide happens because the body
+    // rotates faster than the (degraded) tires can follow — limiting yaw by
+    // the degraded grip would make handbrake drifts impossible.
+    const yawGrip = (this.onGrass ? CAR.gripGrass : CAR.gripAsphalt) * gEff;
 
-    // --- surface grip multiplier ------------------------------------------
-    const muBase = this.onGrass ? CAR.gripGrass : (this.onCurb ? CAR.gripCurb : CAR.gripAsphalt);
-
-    // --- steering: Ackermann-corrected front wheel angles -----------------
-    // Bicycle model: average steer angle from input, then Ackermann splits
-    // it between inner and outer front wheels for true geometric turning.
-    const baseSteer = -steerInput * CAR.maxSteerAngle;
-    // Ackermann correction: inner wheel steers more than outer
-    const turnRadius = Math.abs(this.yawRate) > 0.01 ? vF / this.yawRate : 1e6;
-    const ackL = Math.atan(this._halfWB / (turnRadius + this._halfTrack)) * Math.sign(baseSteer);
-    const ackR = Math.atan(this._halfWB / (turnRadius - this._halfTrack)) * Math.sign(baseSteer);
-    // smooth blend: at low yaw, fall back to equal steer
-    const ackBlend = clamp(Math.abs(turnRadius) / 30, 0, 1);
-    const steerFL = baseSteer * (1 - ackBlend) + ackL * ackBlend;
-    const steerFR = baseSteer * (1 - ackBlend) + ackR * ackBlend;
-
-    // --- driven wheels get torque; non-driven wheels free-roll ------------
-    // RWD layout (911 is rear-engine, RWD on the Carrera)
-    const driven = [false, false, true, true];
-    const driveTorquePerWheel = this.trans.driveForce * CAR.wheelRadius / 2; // N·m per driven wheel
-
-    // brake torque split 60/40 F/R
-    const brakeBiasFront = 0.60;
-    const totalBrakeTorque = driverBrake * CAR.brakeTorque;
-    const brakeTorqueF = totalBrakeTorque * brakeBiasFront / 2;
-    const brakeTorqueR = totalBrakeTorque * (1 - brakeBiasFront) / 2;
-    const brakeTorque = [brakeTorqueF, brakeTorqueF, brakeTorqueR, brakeTorqueR];
-
-    // handbrake: lock the rear axle (huge brake torque on rear wheels)
-    const handbrakeTorque = handbrake ? CAR.brakeTorque * 1.2 : 0;
-
-    // rolling resistance torque (small, always present)
-    const rrTorque = CAR.rollingResistance * g * CAR.wheelRadius * 0.02;
-
-    // --- per-wheel slip ratios + forces -----------------------------------
-    let totalFx = 0;       // body-forward force (N)
-    let totalFy = 0;       // body-right force (N)
-    let yawMoment = 0;     // N·m around CG
+    // --- longitudinal: drive force with rear traction cap -----------------------
+    let driveF = this.trans.driveForce;   // N, signed
+    const muLong = muBase * 1.05;
+    const rearTractionMax = muLong * loadR;   // N
     this.wheelspin = false;
+    if (driveF > rearTractionMax) {
+      driveF = rearTractionMax * (0.94 + 0.06 * Math.sin(this._time * 30));
+      this.wheelspin = true;
+      this.trans.wheelspin = true;
+    } else if (driveF < -rearTractionMax * 0.9) {
+      driveF = -rearTractionMax * 0.9;
+      this.wheelspin = true;
+      this.trans.wheelspin = true;
+    }
+    this.engineForce = driveF / m; // m/s^2 (telemetry)
 
-    const R = CAR.wheelRadius;
-    for (let i = 0; i < 4; i++) {
-      const load = this.wheelLoad[i];
-      const omega = this.wheelOmega[i];
-      // wheel ground speed = hub forward speed
-      const vGround = hubVel[i].vx;
-      // slip ratio: kappa = (omega*R - vGround) / max(|vGround|, vRef)
-      const vRef = Math.max(Math.abs(vGround), 2.0);
-      let kappa = (omega * R - vGround) / vRef;
-      kappa = clamp(kappa, -1, 1);
+    // --- brakes (traction-limited; in auto+R the brake pedal is reverse) --------
+    const brakeDrivesReverse = this.trans.mode === 'auto' && this.trans.gear === -1;
+    let brakeF = 0;
+    if (driverBrake > 0 && vF > 0.4) {
+      const capTotal = muLong * (loadF + loadR) / m;
+      brakeF = Math.min(CAR.brakeDecel * driverBrake, capTotal);
+    } else if (driverBrake > 0 && vF < -0.4 && !brakeDrivesReverse) {
+      // braking while rolling backwards (manual mode)
+      const capTotal = muLong * (loadF + loadR) / m;
+      brakeF = Math.min(CAR.brakeDecel * driverBrake, capTotal);
+    }
+    if (handbrake && vAbs > 0.3) {
+      brakeF = Math.max(brakeF, muLong * loadR / m * 0.75);
+    }
+    // parking brake outside racing states
+    if (holdStill) brakeF = Math.max(brakeF, 14);
 
-      // slip angle: alpha = atan(vL_hub / |vF_hub|) - steerAngle
-      const vHubAbs = Math.max(Math.abs(hubVel[i].vx), 0.5);
-      let alpha = Math.atan2(hubVel[i].vy, vHubAbs);
-      if (i === 0) alpha -= steerFL;       // front wheels steer
-      else if (i === 1) alpha -= steerFR;
-
-      // handbrake locks the rear wheels -> kappa = -1 (pure slide)
-      if ((i === 2 || i === 3) && handbrake) {
-        kappa = -Math.sign(vGround);
-        alpha *= 0.3; // handbrake also reduces lateral grip
+    // --- longitudinal integration ------------------------------------------------
+    vF += driveF / m * dt;
+    if (brakeF > 0) {
+      const dv = brakeF * dt;
+      if (Math.abs(vF) <= dv) {
+        if (!this.trans.launching && this.trans.gear >= 0) vF = 0;
+        else vF = Math.sign(vF) * Math.max(0, Math.abs(vF) - dv);
+      } else {
+        vF -= Math.sign(vF) * dv;
       }
-
-      // surface mu (driven wheels under power get a small reduction at high slip)
-      let mu = muBase;
-      if (driven[i] && Math.abs(kappa) > 0.15) {
-        mu *= 1 - clamp((Math.abs(kappa) - 0.15) * 0.3, 0, 0.2);
-      }
-
-      // combined Pacejka
-      const { Fx, Fy } = combinedSlip(kappa, alpha, mu);
-      const FxN = Fx * load;
-      const FyN = Fy * load;
-
-      this.wheelFx[i] = FxN;
-      this.wheelFy[i] = FyN;
-      this.wheelSlipKappa[i] = kappa;
-      this.wheelSlipAlpha[i] = alpha;
-
-      totalFx += FxN;
-      totalFy += FyN;
-
-      // yaw moment: M = Fy * x_hub - Fx * y_hub (around CG)
-      const xHub = (i < 2) ? -this._halfWB : this._halfWB;
-      const yHub = (i % 2 === 0) ? -this._halfTrack : this._halfTrack;
-      yawMoment += FyN * xHub - FxN * yHub;
-
-      // wheelspin flag for visual + audio
-      if (Math.abs(kappa) > 0.30 && driven[i]) this.wheelspin = true;
-
-      // integrate wheel angular velocity from torques (driven + brake + handbrake + RR)
-      let torque = 0;
-      if (driven[i]) torque += driveTorquePerWheel;
-      torque -= brakeTorque[i];
-      if (i === 2 || i === 3) torque -= handbrakeTorque;
-      torque -= Math.sign(omega) * rrTorque;
-      // reaction torque from the tire force (Newton's 3rd law on the wheel)
-      torque -= FxN * R;
-      this.wheelOmega[i] = omega + torque / CAR.wheelInertia * dt;
-      // clamp insane values
-      const omegaMax = 250; // ~700 km/h equivalent
-      this.wheelOmega[i] = clamp(this.wheelOmega[i], -omegaMax, omegaMax);
     }
 
-    this.trans.wheelspin = this.wheelspin;
-
-    // --- aerodynamic drag -------------------------------------------------
-    const dragF = CAR.airDrag * vF * Math.abs(vF);  // N, opposes motion
-    totalFx -= dragF;
-    // small side force from aerodynamic yaw (drift drag)
-    totalFy -= CAR.airDragLat * vL * Math.abs(vL);
-
-    // --- integrate body ---------------------------------------------------
-    const aLong = totalFx / m;
-    const aLat = totalFy / m;
-
-    // forward/lateral velocity update (semi-implicit Euler)
-    let newVF = vF + aLong * dt;
-    let newVL = vL + aLat * dt;
-
-    // rolling resistance at very low speed (parking brake effect)
-    if (holdStill) {
-      newVF *= 0.85;
-      newVL *= 0.85;
+    // rolling resistance + quadratic air drag
+    const rollRes = CAR.rollingResistance * g * (this.onGrass ? 3.2 : 1) / 9.81; // m/s^2
+    if (vAbs > 0.0001) {
+      const drag = CAR.airDrag * vF * vAbs + rollRes * Math.min(1, vAbs / 0.5) * Math.sign(vF);
+      vF -= drag * dt;
+      if (this.onGrass) vF -= CAR.grassDrag * dt * Math.sign(vF) * Math.min(1, vAbs / 2);
+      if (vAbs < 0.02 && throttle === 0 && driverBrake === 0 && !holdStill) vF = 0;
     }
-    if (Math.abs(newVF) < 0.02 && throttle === 0 && driverBrake === 0) newVF = 0;
-
     // reverse speed limiter
-    if (this.trans.gear === -1 && newVF < -CAR.maxReverseSpeed) newVF = -CAR.maxReverseSpeed;
+    if (this.trans.gear === -1 && vF < -CAR.maxReverseSpeed) vF = -CAR.maxReverseSpeed;
 
-    // yaw integration: M = I * d(omega)/dt
-    const yawAccel = yawMoment * this._invInertia;
-    // small yaw damping (tire relaxation + aerodynamic yaw drag)
-    const yawDamp = 0.6;
-    this.yawRate = this.yawRate + (yawAccel - yawDamp * this.yawRate) * dt;
+    // --- steering / yaw ------------------------------------------------------------
+    // commanded yaw is limited by the car's grip circle (kinematic: a = v·ω)
+    const speedSteerFade = Math.min(1, vAbs / CAR.minSteerSpeed);
+    const yawKinematic = yawGrip * CAR.yawGripMultiplier / Math.max(vAbs, 5);
+    const maxYaw = Math.min(CAR.maxYawLowSpeed, yawKinematic) *
+      (this.onGrass ? 0.72 : 1) * (handbrake ? 1.3 : 1);
 
-    // --- re-decompose in the new heading ----------------------------------
-    this.heading += this.yawRate * dt;
+    // NOTE: with fwd = (sin h, 0, cos h), increasing h rotates the car LEFT,
+    // so a positive steer input (right) needs a negative heading change.
+    const targetYaw = -steer * maxYaw * speedSteerFade * (vF < 0 ? -1 : 1);
+    const yaw = damp(this._yaw, targetYaw, CAR.yawDamping, dt);
+    this._yaw = yaw;
+    this.heading += yaw * dt;
 
-    _fwd0.set(Math.sin(this.heading), 0, Math.cos(this.heading));
-    _right0.set(-_fwd0.z, 0, _fwd0.x);
-    this.velocity.copy(_fwd0).multiplyScalar(newVF).addScaledVector(_right0, newVL);
+    // --- re-decompose in the rotated frame (this builds the slide) ------------
+    _fwd1.set(Math.sin(this.heading), 0, Math.cos(this.heading));
+    rightOf(_fwd1, _right1);
+    _vel.copy(_fwd0).multiplyScalar(vF).addScaledVector(_right0, vL0);
 
-    // --- integrate position -----------------------------------------------
+    let nF = _vel.dot(_fwd1);
+    let nL = _vel.dot(_right1);
+
+    // --- lateral grip ----------------------------------------------------------
+    // Coulomb-limited decay: at most the tire cap of lateral correction…
+    nL -= Math.sign(nL) * Math.min(Math.abs(nL), lateralCap * dt);
+    // …plus a small exponential settle so slides do not linger forever
+    nL *= Math.exp(-CAR.lateralDamp * dt);
+
+    // banking pulls the car gently toward the low side of the corners
+    nL += 9.81 * Math.sin(this.roadRoll) * dt * 0.9;
+
+    // --- recompose & integrate ---------------------------------------------------
+    this.velocity.copy(_fwd1).multiplyScalar(nF).addScaledVector(_right1, nL);
     this.position.x += this.velocity.x * dt;
     this.position.z += this.velocity.z * dt;
 
-    // --- telemetry --------------------------------------------------------
-    this.vF = newVF;
-    this.vL = newVL;
-    this.slip = Math.abs(newVL);
-    this.reversing = newVF < -0.5;
-    this.engineForce = aLong;
+    const aLong = dt > 0 ? (nF - vF0) / dt : 0;
+    vF = nF;
+    this.vF = nF;
+    this.vL = nL;
+    this.slip = Math.abs(nL);
+    this.reversing = nF < -0.5;
 
     // --- soft wall collision -------------------------------------------------------
     const wallLat = roadHalf + CAR.wallOffset - CAR.carHalfWidth;
@@ -434,10 +316,10 @@ export class VehiclePhysics {
         this.velocity.z -= rZ * vNormal * (1 + CAR.wallBounce);
         if (impact > 1.5) this.velocity.multiplyScalar(CAR.wallSpeedScrub);
         this.justHitWall = impact > 2.5;
-        this.hitImpact = impact;
+        this.hitImpact = impact;   // m/s of the closing speed (for audio)
       }
-      this.vF = this.velocity.dot(_fwd0);
-      this.vL = this.velocity.dot(_right0);
+      this.vF = this.velocity.dot(_fwd1);
+      this.vL = this.velocity.dot(_right1);
     }
 
     // --- post telemetry ---------------------------------------------------------------
@@ -448,19 +330,19 @@ export class VehiclePhysics {
     this._applySurface(loc2);
     this.position.y = damp(this.position.y, this.surfaceY, 14, dt);
 
-    this.latAccel = damp(this.latAccel, aLat, 6, dt);
+    this.latAccel = damp(this.latAccel, this._yaw * Math.abs(this.vF), 6, dt);
     this.aLongS = damp(this.aLongS, aLong, 5, dt);
 
-    // visual front wheel angle (average of FL + FR steer)
-    this.steerAngle = (steerFL + steerFR) / 2;
+    // visual front wheel angle
+    this.steerAngle = steer * THREE.MathUtils.lerp(0.5, 0.15, Math.min(1, vAbs / 45));
 
     // --- suspension targets ------------------------------------------------------------
     this._updateSuspensionTargets(dt, loc2);
   }
 
   _updateSuspensionTargets(dt, loc) {
-    const longF = clamp(this.aLongS / 11, -1, 1);
-    const leanR = clamp(this.latAccel / 11, -1, 1);
+    const longF = clamp(this.aLongS / 11, -1, 1);          // + = accelerating
+    const leanR = clamp(this._yaw * Math.abs(this.vF) / 11, -1, 1); // + = turning left
     const base = 0.5;
 
     let fl = base - longF * 0.42 - leanR * 0.4;
@@ -468,6 +350,7 @@ export class VehiclePhysics {
     let rl = base + longF * 0.42 - leanR * 0.4;
     let rr = base + longF * 0.42 + leanR * 0.4;
 
+    // curb / bump excitation — alternate knock per wheel pair
     if (this.onCurb && Math.abs(this.vF) > 5) {
       this._bumpPhase += dt * SUSPENSION_FREQ;
       const bump = Math.sin(this._bumpPhase) * 0.5;
@@ -490,6 +373,7 @@ export class VehiclePhysics {
     }
   }
 
+  /** smoothed suspension compression (0..1) per wheel — read by Car */
   get suspSmooth() {
     return this._suspSmooth;
   }

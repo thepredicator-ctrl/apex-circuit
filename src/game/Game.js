@@ -174,18 +174,27 @@ export class Game {
     this.hud.setCockpitMode(this.settings.camera === 'cockpit');
   }
 
-  /** Load the GLB assets (car/interior/tree) and dress the world. */
+  /** Load the GLB assets (car/tree) and dress the world. */
   async _loadAssets() {
     const progress = (frac, label) => {
       if (this.onProgress) this.onProgress(frac, label);
     };
     try {
       progress(0.02, 'LOADING PORSCHE 911…');
-      await this.car.build((t) => progress(0.02 + t * 0.78, 'LOADING PORSCHE 911…'));
-      progress(0.82, 'PLANTING THE FOREST…');
-      const treeScene = await loadGLB('./models/tree.glb',
-        (t) => progress(0.82 + t * 0.16, 'PLANTING THE FOREST…'));
-      this.track.buildTrees(treeScene, this.isMobile);
+      // car build no longer loads the Interior GLB — that's a ~2 MB save and
+      // a big GPU win on iPad (the interior had ~30k tris of cabin mesh).
+      await this.car.build((t) => progress(0.02 + t * 0.92, 'LOADING PORSCHE 911…'));
+
+      // tree GLB: only on desktop. iPad / phone uses the procedural fallback
+      // (cheaper to render, no extra 1 MB download, no instanced draw cost).
+      if (!this.isMobile && !this.isIPad) {
+        progress(0.94, 'PLANTING THE FOREST…');
+        const treeScene = await loadGLB('./models/tree.glb',
+          (t) => progress(0.94 + t * 0.06, 'PLANTING THE FOREST…'));
+        this.track.buildTrees(treeScene, this.isMobile);
+      } else {
+        this.track.buildTrees(null, this.isMobile);
+      }
       progress(1, 'READY');
     } catch (err) {
       console.error('[ApexCircuit] Asset loading failed:', err);
@@ -194,8 +203,9 @@ export class Game {
       if (this.onError) this.onError(err instanceof Error ? err : new Error(String(err)));
       return;
     }
-    // Interior anchor is now rigged (either from the GLB or the fallback) —
-    // safe to switch into the persisted cockpit mode if the user had one.
+    // The car is rigged (with the fallback cockpit anchor since we skipped
+    // the Interior GLB). Reapply the persisted camera mode if the user had
+    // selected 'cockpit' — it now silently maps to 'hood'.
     this._reapplyCameraWhenReady();
     this.state = 'idle';
   }
@@ -352,9 +362,13 @@ export class Game {
 
   toggleCamera() {
     if (this.hud.settingsOpen) return;
-    const next = this.settings.camera === 'chase' ? 'cockpit' : 'chase';
+    // toggle between 'chase' and 'hood'. 'cockpit' is the legacy persisted
+    // value from older builds — it's mapped to 'hood' in CameraRig.setMode,
+    // so we treat it as 'hood' for the toggle logic.
+    const isHood = this.settings.camera === 'hood' || this.settings.camera === 'cockpit';
+    const next = isHood ? 'chase' : 'hood';
     this.changeSetting('camera', next);
-    this.hud.showLapToast(next === 'cockpit' ? 'COCKPIT VIEW' : 'CHASE VIEW');
+    this.hud.showLapToast(next === 'hood' ? 'HOOD VIEW' : 'CHASE VIEW');
   }
 
   toggleTransmission() {

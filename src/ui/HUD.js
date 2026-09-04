@@ -71,7 +71,7 @@ const TEMPLATE = `
       <span class="settings-label">Camera</span>
       <div class="settings-seg" id="set-cam">
         <button data-v="chase" type="button">CHASE</button>
-        <button data-v="cockpit" type="button">COCKPIT</button>
+        <button data-v="hood" type="button">HOOD</button>
       </div>
     </div>
     <div class="settings-row">
@@ -184,7 +184,9 @@ export class HUD {
       seg.querySelectorAll('button').forEach((x) => x.classList.toggle('on', x.dataset.v === v));
     };
     mark('set-trans', data.transmission);
-    mark('set-cam', data.camera);
+    // Legacy 'cockpit' setting maps to 'hood' in the UI
+    const camVal = (data.camera === 'cockpit') ? 'hood' : data.camera;
+    mark('set-cam', camVal);
     mark('set-quality', data.quality);
     if (data.paint) mark('set-paint', data.paint);
     document.getElementById('set-master').value = data.masterVolume;
@@ -213,13 +215,16 @@ export class HUD {
   }
 
   setCockpitMode(on) {
-    this.el.hud.classList.toggle('hud--cockpit', on);
+    // Kept for backwards-compat with Game.js calls; the hood cam doesn't
+    // need any HUD class toggles so this is a no-op now.
   }
 
   setModes(trans, cam) {
     this.el.modeTrans.textContent = trans === 'manual' ? 'MANUAL' : 'AUTO';
     this.el.modeTrans.classList.toggle('manual', trans === 'manual');
-    this.el.modeCam.textContent = cam === 'cockpit' ? 'COCKPIT' : 'CHASE';
+    // 'hood' or legacy 'cockpit' (mapped to hood in the camera rig)
+    const isHood = cam === 'hood' || cam === 'cockpit';
+    this.el.modeCam.textContent = isHood ? 'HOOD' : 'CHASE';
   }
 
   update(phys, race, trans) {

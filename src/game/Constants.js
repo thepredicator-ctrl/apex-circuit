@@ -40,37 +40,30 @@ export const HEADLIGHTS = {
 export const CAR = {
   mass: 1180,               // kg
   wheelbase: 2.96,          // m (Porsche 911 Carrera 4S)
-  trackWidth: 1.50,         // m — front/rear track (≈ same on the 911)
-  cgHeight: 0.42,           // m — lower than arcade for flatter cornering
-  weightDistFront: 0.42,    // 911 rear-engine: ~42/58 F/R static load
+  cgHeight: 0.46,           // m — raised slightly for more palpable weight transfer
+  weightDistFront: 0.42,    // 911 is rear-engine ~42/58 F/R static load
   wheelRadius: 0.34,        // m
 
-  maxSpeed: 66,             // m/s (~238 km/h) — top of 6th
+  maxSpeed: 66,             // m/s (~238 km/h)
   maxReverseSpeed: 11,
-  brakeDecel: 30,           // m/s^2 (kept for legacy HUD reads)
-  brakeTorque: 2600,        // N·m total brake torque at full pedal
-  rollingResistance: 0.35,  // * g — radial tires
-  airDrag: 0.00042,         // * v^2 (Cd*A/rho folded in)
-  airDragLat: 0.00020,      // * vLat^2 — side wind/drift drag
-  downforce: 1.9,           // * v^2 -> N (split 45/55 F/R)
+  brakeDecel: 26,           // m/s^2 at full load (slightly below peak mu*g so trail-braking has feel)
+  rollingResistance: 0.35,
+  airDrag: 0.00042,
+  downforce: 1.4,           // * v^2 -> N (lowered so high-speed grip doesn't go infinite)
 
-  // tire grip — Pacejka D multiplier (peak friction coefficient)
-  gripAsphalt: 1.40,        // ~dry performance tires
-  gripCurb:    1.00,        // curbs are painted concrete — less grip
-  gripGrass:   0.45,
-  handbrakeRearGrip: 0.34,  // legacy (unused in Pacejka path but kept for HUD)
-  powerOversteerFactor: 0.80,
-  highSteerGripFactor: 0.88,
-  lateralDamp: 1.6,
-  yawDamping: 7.5,
+  // lateral grip — tuned for SIM feel: less peak grip, more progressive breakaway
+  gripAsphalt: 1.10,        // was 1.35 — real sport tires peak ~1.1-1.2 mu, was arcade-sticky
+  gripGrass: 0.45,
+  handbrakeRearGrip: 0.30,
+  powerOversteerFactor: 0.74, // more aggressive power oversteer
+  highSteerGripFactor: 0.82,  // more front washout at high steer + speed
+  lateralDamp: 2.0,         // slides settle a bit slower (more drifty)
+  yawDamping: 6.0,          // yaw response less damped (more rotational feel)
 
-  // steering
-  maxSteerAngle: 0.55,      // rad — ~31° max front wheel lock
-  minSteerSpeed: 1.4,       // m/s below which steering fades out (kept for HUD)
-
-  // vehicle inertia
-  yawInertia: 1850,         // kg·m² — 911 is mid-low polar inertia
-  wheelInertia: 1.6,        // kg·m² per wheel (tire + rim)
+  // yaw rate limits — LOWERED for sim feel (the car can't rotate as fast)
+  maxYawLowSpeed: 2.0,      // was 2.6 — real cars rotate ~1.5-2 rad/s at full lock low speed
+  yawGripMultiplier: 0.92,  // was 1.05 — yaw stays just inside the grip circle (more understeer at the limit)
+  minSteerSpeed: 1.4,
 
   grassDrag: 6.5,
 
@@ -143,15 +136,14 @@ export const CAMERA = {
   velocityLead: 0.28,
   accelLift: 0.55,          // camera rises back under acceleration (m)
   brakeDive: 0.45,          // drops closer under braking (m)
-  // --- cockpit -------------------------------------------------------------
-  cockpitFov: 70,
-  cockpitFovBoost: 7,       // cockpit FOV also widens with speed
-  cockpitPos: [-0.13, 1.06, 0.14], // local to car model space (nose=+Z)
-  cockpitLookAhead: 30,
-  cockpitDamping: 10,
-  cockpitAccelDip: 0.028,   // m of head travel per g
-  cockpitRollInfluence: 0.5,
-  cockpitShake: 0.02        // cabin vibration amplitude
+  // --- hood ----------------------------------------------------------------
+  // Replaces the old cockpit mode. Sits on the hood, no interior needed.
+  hoodFov: 68,
+  hoodFovBoost: 6,          // hood FOV widens slightly with speed
+  hoodLookAhead: 25,        // m forward to look
+  hoodDamping: 12,          // tight follow — feels like you're in the car
+  hoodLookDamping: 14,
+  hoodShake: 0.018          // cabin vibration amplitude
 };
 
 /** Graphics quality presets. */

@@ -1,14 +1,22 @@
 /**
- * CameraRig — third-person chase camera + first-person cockpit camera.
+ * CameraRig — third-person chase camera + hood-cam (no interior).
  *
  * Chase: damped follow with velocity prediction (aims where the car is
  * GOING), rises/pulls back under acceleration, dives closer under braking,
  * swings to the outside of corners, subtle roll, FOV widens with speed,
  * never clips below the road surface.
  *
- * Cockpit: rides the car's body (so suspension, banking and bumps all move
- * the head), with a small counter-inertia dip under accel/brake and lean in
- * corners. Damped hard to avoid shake.
+ * Hood: a low, forward-looking camera glued to the car body just above the
+ * hood line — gives the "driver" feel without rendering the interior cabin
+ * (which was tanking the framerate on iPad). Rides the body so suspension,
+ * banking and bumps all move the view; small counter-inertia dip under
+ * accel/brake and lean in corners; damped hard to avoid shake.
+ *
+ * The old `cockpit` mode (which rode the interior GLB's cockpitAnchor) is
+ * GONE — the Interior GLB is no longer loaded, so the anchor doesn't exist.
+ * The Settings 'camera' field still accepts 'chase' | 'cockpit' for
+ * backwards-compatible localStorage, but 'cockpit' is silently mapped to
+ * 'hood' in setMode().
  */
 
 import * as THREE from 'three';
@@ -18,18 +26,16 @@ const _fwd = new THREE.Vector3();
 const _right = new THREE.Vector3();
 const _desired = new THREE.Vector3();
 const _look = new THREE.Vector3();
-const _world = new THREE.Vector3();
 const _tmp = new THREE.Vector3();
 
 export class CameraRig {
   constructor(camera) {
     this.camera = camera;
-    this.mode = 'chase';              // 'chase' | 'cockpit'
+    this.mode = 'chase';              // 'chase' | 'hood'
     this.curPos = new THREE.Vector3();
     this.curLook = new THREE.Vector3();
     this.roll = 0;
     this.fov = CAMERA.fovBase;
-    this._headOffset = new THREE.Vector3(); // cockpit head inertia offset
     this._first = true;
     this.smoothing = 1.0;             // settings multiplier
     this._t = 0;                      // shake clock
@@ -40,12 +46,15 @@ export class CameraRig {
   }
 
   setMode(mode, car, phys) {
-    if (mode !== 'chase' && mode !== 'cockpit') return;
+    // Backwards-compat: persisted 'cockpit' setting maps to 'hood' now
+    // that the interior view is removed.
+    if (mode === 'cockpit') mode = 'hood';
+    if (mode !== 'chase' && mode !== 'hood') return;
     this.mode = mode;
     this._first = true;
-    if (this.mode === 'cockpit') {
-      this.camera.near = 0.06;
-      this.camera.fov = CAMERA.cockpitFov;
+    if (this.mode === 'hood') {
+      this.camera.near = 0.1;
+      this.camera.fov = CAMERA.hoodFov;
     } else {
       this.camera.near = 0.3;
       this.camera.fov = CAMERA.fovBase;
@@ -55,32 +64,22 @@ export class CameraRig {
   }
 
   toggle(car, phys) {
-    this.setMode(this.mode === 'chase' ? 'cockpit' : 'chase', car, phys);
+    this.setMode(this.mode === 'chase' ? 'hood' : 'chase', car, phys);
   }
 
   /**
    * Jump instantly to the correct pose (race start / reset / mode switch).
-   *
-   * Defensive: if the cockpit anchor isn't ready yet (GLB still streaming,
-   * Interior failed to load and the fallback hasn't run, or the user toggled
-   * to cockpit mode during the loading screen on iPad Safari), we gracefully
-   * fall back to the chase pose instead of throwing — see GitHub issue
-   * "t.cockpitAnchor.getWorldPosition is not a function" crash on iPad.
+   * No cockpit anchor is needed anymore — the hood cam reads only the
+   * car's body position + heading.
    */
   snap(car, phys) {
     this._first = true;
-    const canCockpit = this.mode === 'cockpit' && car && car.cockpitAnchor;
-    if (canCockpit) {
-      car.cockpitAnchor.getWorldPosition(this.curPos);
-      const fwd = _fwd.set(Math.sin(phys.heading), 0, Math.cos(phys.heading));
-      this.curLook.copy(this.curPos).addScaledVector(fwd, CAMERA.cockpitLookAhead);
+    if (this.mode === 'hood') {
+      this._hoodDesired(phys, this.curPos, this.curLook);
     } else {
-      // cockpit requested but the anchor isn't built yet — use the chase pose
-      // as a safe placeholder; the next update() will switch over once the
-      // Interior GLB finishes rigging.
       this._snapChase(phys);
     }
-    this.apply(phys, null);
+    this.apply(phys);
   }
 
   _snapChase(phys) {
@@ -126,20 +125,48 @@ export class CameraRig {
       .add(new THREE.Vector3(0, 1.15, 0));
   }
 
+  /**
+   * Hood camera desired position + look target.
+   * Sits just above the hood line, looking forward along the heading.
+   * Rides the body so suspension/banking all move the view.
+   */
+  _hoodDesired(phys, outPos, outLook) {
+    const fwd = _fwd.set(Math.sin(phys.heading), 0, Math.cos(phys.heading));
+    const right = _right.set(-fwd.z, 0, fwd.x);
+
+    // hood position: 1.1 m forward of the CG (roughly above the windshield
+    // base on a 911), 1.25 m above the road (just above the roof line for
+    // a low sportscar POV)
+    const HOOD_FORWARD = 1.1;
+    const HOOD_HEIGHT = 1.25;
+
+    outPos.copy(phys.position)
+      .addScaledVector(fwd, HOOD_FORWARD)
+      .add(new THREE.Vector3(0, HOOD_HEIGHT, 0));
+
+    // small counter-inertia: dip under braking, rise under accel; lean
+    // opposite to cornering (matches what a driver's head does)
+    const aN = THREE.MathUtils.clamp(phys.aLongS / 9, -1, 1);
+    outPos.y += -aN * 0.05;                // 5 cm dip under hard braking
+    outPos.addScaledVector(right, phys.latAccel * 0.0022);  // tiny lean
+
+    // look forward along the heading, with a slight bias into the steering
+    // so the view previews where the car is pointing
+    outLook.copy(outPos)
+      .addScaledVector(fwd, CAMERA.hoodLookAhead)
+      .addScaledVector(right, phys.steerAngle / 0.5 * 1.6);
+    // aim slightly down the road slope
+    outLook.y = outPos.y + phys.roadPitch * 8 + 0.05;
+  }
+
   update(dt, phys, inputState, car) {
     this._t += dt;
-    // Resolve the *effective* mode for this frame: if the user has cockpit
-    // selected but the car's interior anchor isn't rigged yet (still loading,
-    // or the GLB failed on iPad Safari), temporarily render with the chase
-    // rig so the screen never crashes or goes blank.
-    const wantCockpit = this.mode === 'cockpit';
-    const canCockpit = wantCockpit && car && car.cockpitAnchor;
-    if (canCockpit) {
-      this._updateCockpit(dt, phys, car);
+    if (this.mode === 'hood') {
+      this._updateHood(dt, phys);
     } else {
-      this._updateChase(dt, phys, inputState || { steer: 0 });
+      this._updateChase(dt, phys, inputState);
     }
-    this.apply(phys, car);
+    this.apply(phys);
   }
 
   _updateChase(dt, phys, inputState) {
@@ -168,57 +195,39 @@ export class CameraRig {
     this.fov = THREE.MathUtils.damp(this.fov, targetFov, 4, dt);
   }
 
-  _updateCockpit(dt, phys, car) {
-    // bail to chase if the cockpit anchor isn't rigged yet (asset load still
-    // pending or the Interior GLB failed on iPad Safari) — this is the path
-    // that previously threw "undefined is not an object (evaluating
-    // 't.cockpitAnchor.getWorldPosition')" on the live GitHub Pages site.
-    if (!car || !car.cockpitAnchor) {
-      this._updateChase(dt, phys, { steer: 0 });
-      return;
-    }
-    // eye position rides the body (suspension, bank, bumps)
-    car.cockpitAnchor.getWorldPosition(_world);
-    // counter-inertia: head dips opposite to accel, leans opposite to cornering
-    const fwd = _fwd.set(Math.sin(phys.heading), 0, Math.cos(phys.heading));
-    const right = _right.set(-fwd.z, 0, fwd.x);   // screen-right (matches Physics)
-    _tmp.copy(_world)
-      .addScaledVector(fwd, -phys.aLongS * CAMERA.cockpitAccelDip)
-      .addScaledVector(right, phys.latAccel * 0.0022);
+  _updateHood(dt, phys) {
+    this._hoodDesired(phys, _desired, _look);
 
-    const k = 1 - Math.exp(-CAMERA.cockpitDamping * this.smoothing * dt);
+    // hood cam is tighter than chase — less lag, more "you are there"
+    const kPos = 1 - Math.exp(-CAMERA.hoodDamping * this.smoothing * dt);
+    const kLook = 1 - Math.exp(-CAMERA.hoodLookDamping * this.smoothing * dt);
     if (this._first) {
-      this.curPos.copy(_tmp);
+      this.curPos.copy(_desired);
+      this.curLook.copy(_look);
       this._first = false;
     } else {
-      this.curPos.lerp(_tmp, k);
+      this.curPos.lerp(_desired, kPos);
+      this.curLook.lerp(_look, kLook);
     }
 
-    // look ahead along the heading, slightly into the steering
-    _look.copy(this.curPos).addScaledVector(fwd, CAMERA.cockpitLookAhead)
-      .addScaledVector(right, phys.steerAngle / 0.5 * 2.2);
-    _look.y = this.curPos.y + phys.roadPitch * 12 + 0.1;
-
-    this.curLook.lerp(_look, Math.min(1, dt * 12));
-
     // roll with the car (bank + body roll, damped hard)
-    const targetRoll = phys.roadRoll * CAMERA.cockpitRollInfluence +
-      THREE.MathUtils.clamp(-phys.latAccel * 0.001, -0.03, 0.03);
+    const targetRoll = phys.roadRoll * 0.6 +
+      THREE.MathUtils.clamp(-phys.latAccel * 0.0008, -0.025, 0.025);
     this.roll = THREE.MathUtils.damp(this.roll, targetRoll, 6, dt);
 
-    // cockpit FOV widens a touch with speed too
+    // hood FOV widens with speed (slightly less than chase to avoid nausea)
     const speedN = Math.min(1, Math.abs(phys.vF) / CAR.maxSpeed);
-    this.fov = CAMERA.cockpitFov + CAMERA.cockpitFovBoost * Math.pow(speedN, 1.2);
+    this.fov = CAMERA.hoodFov + CAMERA.hoodFovBoost * Math.pow(speedN, 1.2);
   }
 
-  apply(phys, car) {
+  apply(phys) {
     this.camera.position.copy(this.curPos);
 
     // high-speed shake: smooth pseudo-noise, scales with speed²
     const sN = Math.min(1, Math.abs(phys.vF) / CAR.maxSpeed);
     const amp = this.mode === 'chase'
       ? CAMERA.chaseShake * Math.pow(sN, 2.2)
-      : CAMERA.cockpitShake * (0.25 + Math.pow(sN, 2));
+      : CAMERA.hoodShake * (0.25 + Math.pow(sN, 2));
     if (amp > 0.0005) {
       const t = this._t;
       this.camera.position.x +=
