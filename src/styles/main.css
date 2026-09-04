@@ -105,6 +105,22 @@ html, body {
 }
 .start-btn:hover { background: rgba(255, 59, 48, 0.32); transform: translateY(-1px); }
 .start-btn:active { transform: translateY(1px) scale(0.98); }
+.install-btn {
+  appearance: none;
+  margin-top: 10px;
+  border: 1px solid rgba(110, 220, 130, 0.55);
+  background: rgba(24, 46, 30, 0.55);
+  color: #b8f0c2;
+  font-family: var(--hud-font);
+  font-size: 13px;
+  font-weight: 800;
+  letter-spacing: 2.5px;
+  padding: 12px 26px;
+  border-radius: 999px;
+  cursor: pointer;
+  transition: background 0.15s, transform 0.15s;
+}
+.install-btn:hover { background: rgba(40, 80, 50, 0.7); transform: translateY(-1px); }
 .start-controls {
   margin-top: 26px;
   display: flex;
@@ -369,6 +385,22 @@ html, body {
 .settings-seg button.on {
   background: var(--accent);
   color: #fff;
+}
+/* paint swatch row */
+.settings-paints button {
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border-radius: 50%;
+  background: var(--pc, #888);
+  border: 2px solid rgba(255, 255, 255, 0.18);
+  box-shadow: inset 0 -6px 10px rgba(0, 0, 0, 0.45), inset 0 4px 6px rgba(255, 255, 255, 0.22);
+}
+.settings-paints button:hover { transform: scale(1.12); }
+.settings-paints button.on {
+  background: var(--pc, #888);
+  border-color: #fff;
+  box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.35), inset 0 -6px 10px rgba(0, 0, 0, 0.45);
 }
 .settings-row input[type='range'] {
   flex: 1;

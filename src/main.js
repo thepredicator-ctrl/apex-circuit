@@ -1,6 +1,7 @@
 /**
- * main.js — bootstrap, WebGL capability check, global error handling and
- * start/finish screen wiring. Everything else lives in src/game + src/ui.
+ * main.js — bootstrap, WebGL capability check, global error handling,
+ * service-worker registration, PWA install prompt and start/finish screen
+ * wiring. Everything else lives in src/game + src/ui.
  */
 
 import './styles/main.css';
@@ -9,10 +10,14 @@ import { Game } from './game/Game.js';
 const $ = (id) => document.getElementById(id);
 const app = $('app');
 const loadingScreen = $('loading-screen');
+const loadingLabel = $('loading-label');
+const loadingBar = $('loading-bar');
 const startScreen = $('start-screen');
 const errorOverlay = $('error-overlay');
+const installBtn = $('install-button');
 let booted = false;
 let fatalShown = false;
+let assetsReady = false;
 
 function showFatal(message, hint = '') {
   if (fatalShown) return;
@@ -51,6 +56,61 @@ function checkWebGL() {
   }
 }
 
+// ---- PWA: service worker (precaches the whole game onto the device) ----------
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('./sw.js').then((reg) => {
+      // surface the SW's precache progress on the loading screen
+      navigator.serviceWorker.addEventListener('message', (ev) => {
+        const d = ev.data || {};
+        if (d.type === 'precache-progress' && !assetsReady) {
+          const pct = Math.round((d.done / Math.max(1, d.total)) * 100);
+          if (loadingLabel) loadingLabel.textContent = `DOWNLOADING GAME TO DEVICE — ${pct}%`;
+          if (loadingBar) loadingBar.style.width = `${pct}%`;
+        }
+        if (d.type === 'precache-done') {
+          markDownloaded();
+        }
+      });
+      if (reg.active) {
+        reg.active.postMessage({ type: 'precache-status' });
+      }
+    }).catch(() => { /* SW unavailable (dev server, old browser) — fine */ });
+  });
+}
+
+function markDownloaded() {
+  const el = $('download-state');
+  if (el) el.textContent = 'GAME DOWNLOADED — PLAYS OFFLINE';
+}
+
+// ---- PWA: custom install button ---------------------------------------------
+let deferredInstall = null;
+window.addEventListener('beforeinstallprompt', (e) => {
+  e.preventDefault();
+  deferredInstall = e;
+  if (installBtn) installBtn.style.display = '';
+});
+window.addEventListener('appinstalled', () => {
+  if (installBtn) installBtn.style.display = 'none';
+  markDownloaded();
+});
+if (installBtn) {
+  installBtn.addEventListener('click', async () => {
+    if (!deferredInstall) return;
+    deferredInstall.prompt();
+    await deferredInstall.userChoice.catch(() => {});
+    deferredInstall = null;
+    installBtn.style.display = 'none';
+  });
+}
+// already installed (standalone)?
+if (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches) {
+  if (installBtn) installBtn.style.display = 'none';
+  if (document.readyState !== 'loading') markDownloaded();
+  else window.addEventListener('DOMContentLoaded', markDownloaded);
+}
+
 // ---- boot --------------------------------------------------------------------
 async function boot() {
   if (!checkWebGL()) {
@@ -66,10 +126,10 @@ async function boot() {
     if (!booted) {
       showFatal(
         'The game is taking unusually long to start.',
-        'Your device or browser may not support this game\u2019s graphics features. Try reloading, updating your browser, or enabling hardware acceleration.'
+        'Your device or connection may be too slow for this game\u2019s graphics assets. Try reloading, updating your browser, or enabling hardware acceleration.'
       );
     }
-  }, 15000);
+  }, 90000);
 
   try {
     const game = new Game({
@@ -77,12 +137,23 @@ async function boot() {
       onReady: () => {
         booted = true;
         clearTimeout(bootTimeout);
-        loadingScreen.style.display = 'none';
-        startScreen.style.display = '';
-        updateStartBest();
+        // the start screen unlocks after the GLB assets finish loading
+        const check = setInterval(() => {
+          if (game.state === 'idle' || game.state === 'finished') {
+            clearInterval(check);
+            assetsReady = true;
+            loadingScreen.style.display = 'none';
+            startScreen.style.display = '';
+            updateStartBest();
+          }
+        }, 120);
       },
       onError: (err) => showFatal(err.message || 'Initialization failed')
     });
+    game.onProgress = (frac, label) => {
+      if (loadingBar) loadingBar.style.width = `${Math.round(frac * 100)}%`;
+      if (loadingLabel && label) loadingLabel.textContent = label;
+    };
     game.init();
     wireStartScreen(game);
   } catch (err) {
@@ -111,6 +182,7 @@ function wireStartScreen(game) {
   let started = false;
   const begin = () => {
     if (started || fatalShown) return;
+    if (game.state === 'loading' || !game.car.ready) return; // still streaming
     started = true;
     startScreen.style.display = 'none';
     game.startRace();

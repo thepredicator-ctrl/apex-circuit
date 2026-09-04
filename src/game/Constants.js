@@ -185,5 +185,32 @@ export const DEFAULT_SETTINGS = {
   masterVolume: 0.9,       // 0..1
   engineVolume: 0.8,       // 0..1
   steerSensitivity: 1.0,   // 0.6..1.4 multiplier on steering ramp rate
-  cameraSmoothing: 1.0     // 0.6..1.4 multiplier on chase damping
+  cameraSmoothing: 1.0,    // 0.6..1.4 multiplier on chase damping
+  paint: 'guardsRed'       // key into PAINTS
+};
+
+/**
+ * GLB assets (pre-optimized with gltf-transform, quantized).
+ * All three are fetched up-front and precached by the service worker so the
+ * whole game lives on the device after the first visit.
+ */
+export const MODELS = {
+  car: './models/porsche_911.glb',
+  interior: './models/interior.glb',
+  tree: './models/tree.glb'
+};
+
+/**
+ * Porsche 911 exterior paint presets — applied to the car's "paint" material
+ * as deep clearcoat lacquer. Hex values tuned for the night lighting rig.
+ */
+export const PAINTS = {
+  guardsRed:   { label: 'GUARDS RED',   color: 0xc00d1e },
+  gtSilver:    { label: 'GT SILVER',    color: 0xd6d8dc },
+  nightBlue:   { label: 'NIGHT BLUE',   color: 0x12306e },
+  speedYellow: { label: 'SPEED YELLOW', color: 0xe8c414 },
+  jetBlack:    { label: 'JET BLACK',    color: 0x0a0b0d },
+  irishGreen:  { label: 'IRISH GREEN',  color: 0x0f5132 },
+  arcticGrey:  { label: 'ARCTIC GREY',  color: 0x8b9096 },
+  orange:      { label: 'LAVA ORANGE',  color: 0xe05206 }
 };

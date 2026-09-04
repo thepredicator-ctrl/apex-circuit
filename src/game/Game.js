@@ -19,6 +19,7 @@ import { Settings } from './Settings.js';
 import { HUD } from '../ui/HUD.js';
 import { TouchControls } from '../ui/TouchControls.js';
 import { QUALITY, WORLD, CAR } from './Constants.js';
+import { loadGLB } from './ModelKit.js';
 
 const PHYS_STEP = 1 / 120;
 
@@ -28,7 +29,7 @@ export class Game {
     this.onReady = onReady;
     this.onError = onError;
 
-    this.state = 'booting'; // booting | idle | racing | finished
+    this.state = 'booting'; // booting | loading | idle | racing | finished
     this._raf = null;
     this._clock = new THREE.Clock();
     this._accum = 0;
@@ -37,6 +38,7 @@ export class Game {
     this._lastFrameTime = 0;
     this.particleFactor = 1;
     this._startLightTimer = null;
+    this.onProgress = null;   // set by main.js: (frac, label) => ...
   }
 
   // ------------------------------------------------------------------ setup
@@ -130,9 +132,35 @@ export class Game {
     // ---- debug hooks (used by automated tests, handy in devtools) ----------
     window.__game = this;
 
-    this.state = 'idle';
+    this.state = 'loading';
     this._clock.start();
     this._loop();
+
+    // ---- async world dressing: GLB car + interior + GLB tree field ----------
+    this._loadAssets();
+  }
+
+  /** Load the GLB assets (car/interior/tree) and dress the world. */
+  async _loadAssets() {
+    const progress = (frac, label) => {
+      if (this.onProgress) this.onProgress(frac, label);
+    };
+    try {
+      progress(0.02, 'LOADING PORSCHE 911…');
+      await this.car.build((t) => progress(0.02 + t * 0.78, 'LOADING PORSCHE 911…'));
+      progress(0.82, 'PLANTING THE FOREST…');
+      const treeScene = await loadGLB('./models/tree.glb',
+        (t) => progress(0.82 + t * 0.16, 'PLANTING THE FOREST…'));
+      this.track.buildTrees(treeScene, this.isMobile);
+      progress(1, 'READY');
+    } catch (err) {
+      console.error('[ApexCircuit] Asset loading failed:', err);
+      // fall back to the procedural forest so the game still works
+      this.track.buildTrees(null, this.isMobile);
+      if (this.onError) this.onError(err instanceof Error ? err : new Error(String(err)));
+      return;
+    }
+    this.state = 'idle';
   }
 
   _wireInput() {
@@ -202,6 +230,7 @@ export class Game {
     this.hud.setModes(s.transmission, s.camera);
     this.car.cockpitMode = s.camera === 'cockpit';
     this.hud.setCockpitMode(s.camera === 'cockpit');
+    if (this.car.ready) this.car.setPaint(s.paint);
   }
 
   changeSetting(key, value) {
@@ -229,6 +258,9 @@ export class Game {
         break;
       case 'cameraSmoothing':
         this.cameraRig.setSmoothing(value);
+        break;
+      case 'paint':
+        if (this.car.ready) this.car.setPaint(value);
         break;
     }
     this.hud.syncSettings(this.settings.data);
@@ -288,6 +320,7 @@ export class Game {
   // ------------------------------------------------------------- race flow
   /** called from the start screen (user gesture — unlocks audio) */
   startRace() {
+    if (this.state === 'loading' || !this.car.ready) return; // assets still streaming
     this.audio.init();
     this.audio.setVolumes(this.settings.masterVolume, this.settings.engineVolume);
     this.hud.show();
@@ -348,7 +381,7 @@ export class Game {
     this._updateEffects(dt);
 
     // camera
-    if (this.state === 'idle') {
+    if (this.state === 'idle' || this.state === 'loading') {
       this._updateIdleCamera(dt);
     } else {
       this.cameraRig.update(dt, this.phys, this.input.state, this.car);
@@ -394,6 +427,11 @@ export class Game {
     const offroad = phys.onGrass && speed > 8;
     const spinning = phys.wheelspin && speed < 30;
     const hit = phys.justHitWall;
+
+    // wall impact: crash audio scaled by the closing speed
+    if (hit) {
+      this.audio.crashThud(Math.min(1, (phys.hitImpact || 6) / 12));
+    }
 
     if (!(drifting || offroad || spinning || hit)) {
       this.effects.update(dt);

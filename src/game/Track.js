@@ -15,6 +15,22 @@
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { TRACK } from './Constants.js';
+import { stripExtras as stripTreeExtras, toFloat32Geometry } from './ModelKit.js';
+
+/** Merge float32 geometries keeping only attributes present in every part. */
+function mergeTreeGeos(geos) {
+  if (geos.length === 1) return geos[0];
+  const common = Object.keys(geos[0].attributes).filter((name) =>
+    geos.every((g) => g.attributes[name])
+  );
+  const clean = geos.map((g) => {
+    const out = new THREE.BufferGeometry();
+    for (const name of common) out.setAttribute(name, g.attributes[name]);
+    return out;
+  });
+  const merged = mergeGeometries(clean, false);
+  return merged || clean[0];
+}
 
 // Circuit layout (x, z). s=0 sits on the start/finish straight.
 const CONTROL_POINTS = [
@@ -103,7 +119,6 @@ export class Track {
     this._buildGrandstand();
     this._buildBoards();
     this._buildLightPoles();
-    this._buildTrees();
     this._buildTireStacks();
     this._buildMountains();
     this._buildClouds();
@@ -953,11 +968,26 @@ export class Track {
   }
 
   // ------------------------------------------------------------------ trees
-  _buildTrees() {
+  /**
+   * Field of trees along the circuit. When `treeScene` (the Tree GN glTF) is
+   * provided the real model is instanced — every material of the source tree
+   * becomes one InstancedMesh sharing identical per-instance transforms, so
+   * the whole forest costs one draw call per material. Falls back to the old
+   * procedural pines when no model is available.
+   */
+  buildTrees(treeScene = null, isMobile = false) {
+    if (this._treesBuilt) return;
+    this._treesBuilt = true;
+    if (treeScene) this._buildGLBTrees(treeScene, isMobile);
+    else this._buildProceduralTrees();
+  }
+
+  /** Scatter positions with clearance from the track (shared by both paths). */
+  _treePositions(count = 150) {
     const half = this.roadHalfWidth;
     const positions = [];
     let attempts = 0;
-    while (positions.length < 150 && attempts < 900) {
+    while (positions.length < count && attempts < 900) {
       attempts++;
       const x = -300 + Math.random() * 600;
       const z = -280 + Math.random() * 540;
@@ -970,6 +1000,74 @@ export class Track {
       minD = Math.sqrt(minD);
       if (minD > half + 10 && minD < 170) positions.push([x, z]);
     }
+    return positions;
+  }
+
+  _buildGLBTrees(treeScene, isMobile) {
+    stripTreeExtras(treeScene);
+
+    // bake world transforms + collect one bucket per material
+    const inv = new THREE.Matrix4().copy(treeScene.matrixWorld).invert();
+    treeScene.updateMatrixWorld(true);
+    const buckets = new Map();
+    const allGeos = [];
+    treeScene.traverse((o) => {
+      if (!o.isMesh) return;
+      const g = toFloat32Geometry(o.geometry);
+      g.applyMatrix4(new THREE.Matrix4().multiplyMatrices(inv, o.matrixWorld));
+      const key = o.material.uuid;
+      if (!buckets.has(key)) buckets.set(key, { material: o.material, geos: [] });
+      buckets.get(key).geos.push(g);
+      allGeos.push(g);
+    });
+    if (!buckets.size) return;
+
+    // normalize over the WHOLE tree so all parts stay assembled
+    const whole = mergeTreeGeos(allGeos);
+    whole.computeBoundingBox();
+    const bb = whole.boundingBox;
+    const height = Math.max(0.001, bb.getSize(new THREE.Vector3()).y);
+    const hScale = 11.5 / height;
+    const offX = -(bb.min.x + bb.max.x) / 2;
+    const offZ = -(bb.min.z + bb.max.z) / 2;
+    const offY = -bb.min.y;
+    whole.dispose();
+
+    // one shared set of per-instance transforms (all buckets reuse it)
+    const positions = this._treePositions(isMobile ? 90 : 150);
+    const dummy = new THREE.Object3D();
+    const transforms = positions.map(([x, z]) => {
+      const s = 0.62 + Math.random() * 0.55;   // geometry already normalized
+      dummy.position.set(x, this.heightAtWorld(x, z) - 0.25, z);
+      dummy.scale.setScalar(s);
+      dummy.rotation.set(0, Math.random() * Math.PI * 2, 0);
+      dummy.updateMatrix();
+      return dummy.matrix.clone();
+    });
+
+    for (const { material, geos } of buckets.values()) {
+      const merged = mergeTreeGeos(geos);
+      merged.translate(offX, offY, offZ);
+      merged.scale(hScale, hScale, hScale);
+
+      const inst = new THREE.InstancedMesh(merged, material, transforms.length);
+      transforms.forEach((m, i) => inst.setMatrixAt(i, m));
+      inst.instanceMatrix.needsUpdate = true;
+      inst.castShadow = !isMobile;
+      inst.frustumCulled = false;
+      this.group.add(inst);
+    }
+
+    // moonlit tint on the shared source materials
+    treeScene.traverse((o) => {
+      if (o.isMesh && o.material) {
+        o.material.color = new THREE.Color(o.material.map ? 0xb8c4d8 : 0x9aa6ba);
+      }
+    });
+  }
+
+  _buildProceduralTrees() {
+    const positions = this._treePositions(150);
 
     const trunkGeo = new THREE.CylinderGeometry(0.16, 0.26, 1.5, 6);
     const pineGeo = new THREE.ConeGeometry(1.05, 2.7, 7);

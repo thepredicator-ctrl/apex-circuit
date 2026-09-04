@@ -1,280 +1,323 @@
 /**
- * Interior — Audi-inspired (RS / R8 style) cockpit, fully procedural.
+ * Interior — Jaguar XJ220 cockpit (Gerhald, CC-BY-4.0) from
+ * `public/models/interior.glb`, fitted into the Porsche cabin and rigged:
  *
- * Layout is LHD (driver on the left), matching the German theme.
- * Body space: +X nose, +Y up, +Z car-right. DRIVER_Z = -0.33.
+ *  - the model's separate "weel" (steering wheel) node is re-pivoted around
+ *    its own column axis so it rotates with the steering input;
+ *  - a live instrument cluster is built behind it: canvas dial faces with
+ *    PHYSICAL 3D needles (rpm + speed) that sweep with the drivetrain state,
+ *    plus shift LEDs, gear indicator and lap timing drawn into the texture;
+ *  - an MMI-style center screen shows the live track minimap;
+ *  - sport pedals, shifter and handbrake are placed to match the wheel.
  *
- * Highlights:
- *  - High-poly flat-bottom sport steering wheel (extruded rounded rim with
- *    bevels, Audi four-rings hub, red 12 o'clock stripe, button pods,
- *    aluminum paddle shifters behind the rim).
- *  - "Virtual Cockpit" widescreen instrument display (live canvas texture:
- *    big tach, digital speed, gear, shift LEDs, Audi-style red graphics).
- *  - Center MMI touchscreen with a live minimap drawn from the actual track
- *    spline (car dot moves in real time).
- *  - Wrap-around dash with red ambient light strip, carbon + aluminum trim,
- *    RS bucket seats with red accents, aluminum sport pedals, dead pedal,
- *    aluminum shift knob, handbrake, interior mirror.
+ * The cabin mesh is re-skinned to a dark night-trim (the source material is
+ * tan plastic) and lit by a dim red ambient rig so the cockpit reads at
+ * night without breaking the atmosphere.
  */
 
 import * as THREE from 'three';
-import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
-import { CAR } from './Constants.js';
+import { loadGLB, stripExtras, toFloat32Geometry, keepTriangles } from './ModelKit.js';
 
-const DRIVER_Z = -0.33;
-const _v = new THREE.Vector3();
+// cabin fitting (model space: nose +X, Y up, +Z right)
+const CABIN = {
+  rotationY: -Math.PI / 2,   // interior is authored nose -X -> rotate to nose +X
+  mirrorX: true,             // source is right-hand-drive -> flip to LHD
+  targetWidth: 1.46,         // fitted cabin width in meters
+  scale: 1.0,                // extra trim factor (source is already metric)
+  posX: 0.42,                // dash toward the nose
+  posY: -0.55,               // drop so the sill hides under the beltline
+  posZ: 0.0
+};
 
-function box(w, h, d, x, y, z) {
-  const g = new THREE.BoxGeometry(w, h, d);
-  g.translate(x, y, z);
-  return g;
+// where the steering wheel must end up (model space, meters). The whole cabin
+// is shifted so the wheel's baked center hits exactly this point.
+const WHEEL_TARGET = new THREE.Vector3(-0.24, 0.36, -0.37);
+
+/** Give the steering wheel rim its own leather material. */
+function weelLeather(scene, mat) {
+  scene.traverse((o) => {
+    if (o.isMesh && o.name.toLowerCase().includes('weel')) o.material = mat;
+  });
 }
 
-/** Orient a group so its local +Z axis points along `normal` (unit-ish). */
-function faceAlong(group, normal) {
-  _v.copy(group.position).add(normal);
-  group.lookAt(_v);
-}
-
-// ===================================================================
-// BUILD
-// ===================================================================
-
-export function buildInterior(car) {
+export async function buildInterior(car, onProgress) {
+  const scene = await loadGLB('./models/interior.glb',
+    (t) => onProgress && onProgress(0.8 + t * 0.2));
+  stripExtras(scene);
   const M = car.mats;
 
-  // extra cockpit materials --------------------------------------------------
-  M.alu = new THREE.MeshStandardMaterial({
-    color: 0xc7ccd3, metalness: 0.95, roughness: 0.34, envMapIntensity: 1.2
+  // ---- re-skin to dark trim -------------------------------------------------
+  const trim = new THREE.MeshStandardMaterial({
+    color: 0x22252b, metalness: 0.16, roughness: 0.78, envMapIntensity: 0.55,
+    side: THREE.DoubleSide
   });
-  M.carbon = new THREE.MeshStandardMaterial({
-    color: 0x10141a, metalness: 0.55, roughness: 0.38
+  const trimSoft = new THREE.MeshStandardMaterial({
+    color: 0x2a2d34, metalness: 0.08, roughness: 0.88, envMapIntensity: 0.45,
+    side: THREE.DoubleSide
   });
-  M.redLeather = new THREE.MeshStandardMaterial({
-    color: 0x8c1520, metalness: 0.15, roughness: 0.68
+  // the wheel rim gets its own lighter leather so it reads at night
+  const wheelLeather = new THREE.MeshStandardMaterial({
+    color: 0x31343c, metalness: 0.1, roughness: 0.72, envMapIntensity: 0.7,
+    side: THREE.DoubleSide
   });
-  M.ambient = new THREE.MeshStandardMaterial({
-    color: 0x2a060b, emissive: 0xff1e2d, emissiveIntensity: 1.6,
-    roughness: 0.5
+  M.cabinTrim = trim;
+  M.cabinTrimSoft = trimSoft;
+  M.wheelLeather = wheelLeather;
+  scene.traverse((o) => {
+    if (!o.isMesh) return;
+    o.castShadow = false;
+    o.receiveShadow = false;
+    const n = (o.material && o.material.name) || '';
+    o.material = n === 'default_0' ? trimSoft : trim;
   });
-  M.btnGlow = new THREE.MeshStandardMaterial({
-    color: 0x200a0c, emissive: 0xff2434, emissiveIntensity: 1.4
-  });
-  // (M.well — wheel-well liner material — is created in Car._buildMaterials)
+  weelLeather(scene, wheelLeather);
 
-  // cockpit eye anchor (on the body, follows suspension) ----------------------
-  car.cockpitAnchor = new THREE.Object3D();
-  car.cockpitAnchor.position.set(-0.02, 1.03, DRIVER_Z);
-  car.body.add(car.cockpitAnchor);
+  // ---- fit into the car ------------------------------------------------------
+  // measure, then place with the tuned transform
+  scene.updateMatrixWorld(true);
+  const bb = new THREE.Box3().setFromObject(scene);
+  const size = bb.getSize(new THREE.Vector3());
+  const fitScale = CABIN.scale * (CABIN.targetWidth / Math.max(0.001, size.x));
+  const cabin = new THREE.Group();
+  cabin.add(scene);
+  scene.scale.setScalar(fitScale);
+  scene.rotation.y = CABIN.rotationY;
+  if (CABIN.mirrorX) scene.scale.x *= -1;
 
-  _buildTub(car);
-  _buildDash(car);
-  _buildSteeringWheel(car);
-  _buildScreens(car);
-  _buildSeats(car);
-  _buildControls(car);
-  _buildDriver(car);
+  // after scaling, re-measure to anchor: dash face toward +X, floor near y=0.25
+  scene.updateMatrixWorld(true);
+  const bb2 = new THREE.Box3().setFromObject(scene);
+  const c2 = bb2.getCenter(new THREE.Vector3());
+  scene.position.x -= c2.x;
+  scene.position.z -= c2.z;
+  scene.position.y -= bb2.min.y;
 
-  // warm red cabin fill so the cockpit never goes pitch black at night —
-  // subtle: the screens and the ambient light line do most of the work
-  const cabin = new THREE.PointLight(0xff5544, 1.05, 2.6, 2);
-  cabin.position.set(0.55, 1.08, 0.05);
+  cabin.position.set(CABIN.posX, CABIN.posY, CABIN.posZ);
   car.body.add(cabin);
-  car.cabinLight = cabin;
-}
+  car.cabinGroup = cabin;
 
-// ------------------------------------------------------------------ tub
-function _buildTub(car) {
-  const M = car.mats;
-  const dark = [], soft = [], carbon = [], ambient = [], red = [];
-
-  // floor, tunnel, bulkhead, footwells
-  dark.push(box(2.2, 0.06, 1.4, -0.2, 0.2, 0));
-  dark.push(box(1.9, 0.3, 0.26, -0.25, 0.36, 0));
-  dark.push(box(0.06, 0.62, 1.4, -1.28, 0.55, 0));
-  dark.push(box(0.7, 0.5, 1.42, 0.72, 0.42, 0));
-  // door cards + armrests (tall GT sill — hides the wheel arches from inside)
-  for (const s of [1, -1]) {
-    dark.push(box(1.7, 0.62, 0.05, -0.35, 0.60, s * 0.72));
-    soft.push(box(1.5, 0.08, 0.09, -0.35, 0.62, s * 0.7));
-    // door ambient strip (Audi-style light line)
-    ambient.push(box(0.9, 0.012, 0.02, -0.3, 0.85, s * 0.695));
-    // door pull handle in aluminum
-    dark.push(box(0.16, 0.03, 0.05, -0.05, 0.68, s * 0.69));
+  // ---- bake the whole cabin into body space + cut the greenhouse -------------
+  // The XJ220 cabin is one merged mesh including its own roof; the 911 has
+  // its own glass canopy, so everything above the beltline/eye line goes.
+  // Every mesh (incl. the steering wheel) ends up with identity transforms
+  // and body-space geometry — no nested transform surprises afterwards.
+  {
+    car.body.updateMatrixWorld(true);
+    const bodyInv = new THREE.Matrix4().copy(car.body.matrixWorld).invert();
+    const cut = 0.82;                    // model-space meters — removes the
+                                         // donor's windshield header entirely
+    scene.traverse((o) => {
+      if (!o.isMesh) return;
+      const g = toFloat32Geometry(o.geometry);
+      g.applyMatrix4(new THREE.Matrix4().multiplyMatrices(bodyInv, o.matrixWorld));
+      const pos = g.attributes.position;
+      const keep = new Array(pos.count);
+      for (let i = 0; i < pos.count; i++) keep[i] = pos.getY(i) <= cut;
+      const kept = keepTriangles(g, keep);
+      if (kept) {
+        o.geometry = kept;
+        o.position.set(0, 0, 0);
+        o.quaternion.identity();
+        o.scale.set(1, 1, 1);
+      } else {
+        o.visible = false;
+      }
+      g.dispose();
+    });
+    scene.position.set(0, 0, 0);
+    scene.rotation.set(0, 0, 0);
+    scene.scale.set(1, 1, 1);
+    cabin.position.set(0, 0, 0);
   }
-  // roof lining (set back so it never crowds the forward view)
-  soft.push(box(1.2, 0.04, 1.3, -0.55, 1.19, 0));
 
-  // interior mirror
-  dark.push(box(0.03, 0.07, 0.26, 0.7, 1.08, 0));
+  // ---- snap the cabin to a known-good anchor ---------------------------------
+  // Whatever the upstream transforms did, the steering wheel must sit at
+  // WHEEL_TARGET (model space: LHD, slightly forward of the hips, left side).
+  let weel = null;
+  scene.traverse((o) => { if (!weel && o.isMesh && o.name.toLowerCase().includes('weel')) weel = o; });
+  if (!weel) throw new Error('steering wheel node not found');
+  {
+    weel.geometry.computeBoundingBox();
+    const wb = weel.geometry.boundingBox;
+    const wc = new THREE.Vector3(
+      (wb.min.x + wb.max.x) / 2, (wb.min.y + wb.max.y) / 2, (wb.min.z + wb.max.z) / 2
+    );
+    cabin.position.x += WHEEL_TARGET.x - wc.x;
+    cabin.position.y += WHEEL_TARGET.y - wc.y;
+    cabin.position.z += WHEEL_TARGET.z - wc.z;
+  }
 
-  car._addMeshes(dark, M.interior, false, false);
-  car._addMeshes(soft, M.interiorSoft, false, false);
-  car._addMeshes(carbon, M.carbon, false, false);
-  car._addMeshes(red, M.redLeather, false, false);
-  const ambMesh = car._addMeshes(ambient, M.ambient, false, false);
-  car._ambientMeshes = ambMesh ? [ambMesh] : [];
+  rigSteeringWheel(car, weel, cabin.position);
+
+  // ---- instrument cluster with physical needles ------------------------------
+  buildCluster(car);
+
+  // ---- MMI screen ------------------------------------------------------------
+  buildMMI(car);
+
+  // ---- controls: pedals + shifter + handbrake --------------------------------
+  buildControls(car);
+
+  // ---- ambience ---------------------------------------------------------------
+  const cabin1 = new THREE.PointLight(0xff6a55, 2.2, 3.4, 1.5);
+  cabin1.position.set(0.30, 1.06, 0.05);
+  car.body.add(cabin1);
+  car.cabinLight = cabin1;
+  // soft cool fill over the cluster + wheel so they read at night
+  const clusterFill = new THREE.PointLight(0xcfe0ff, 1.5, 1.7, 1.6);
+  clusterFill.position.set(0.05, 0.95, -0.30);
+  car.body.add(clusterFill);
+
+  // cockpit eye anchor — natural seated position; the donor cabin shell is
+  // hidden in cockpit view so nothing occludes the wheel + cluster + road
+  car.cockpitAnchor = new THREE.Object3D();
+  car.cockpitAnchor.position.set(
+    (car.wheelModelPos ? car.wheelModelPos.x - 0.62 : -0.05),
+    (car.wheelModelPos ? car.wheelModelPos.y + 0.46 : 1.02),
+    (car.wheelModelPos ? car.wheelModelPos.z : -0.33)
+  );
+  car.body.add(car.cockpitAnchor);
 }
 
-// ------------------------------------------------------------------ dash
-function _buildDash(car) {
-  const M = car.mats;
-  const dark = [], soft = [], carbon = [], ambient = [], alu = [];
+/**
+ * Re-parent the wheel mesh under a pivot whose +Z axis is the wheel's own
+ * column axis. The column axis is whichever of the node's local axes maps
+ * most rearward (−X) in body space — FBX pipelines bake arbitrary rotations,
+ * so the natural wheel axis may be local X, Y or Z.
+ */
+function rigSteeringWheel(car, weel, cabinOffset) {
+  // after the bake the wheel's node transform is identity; its body-space
+  // position is geometry bbox center + the cabin's snap offset
+  weel.geometry.computeBoundingBox();
+  const wb = weel.geometry.boundingBox;
+  const worldPos = new THREE.Vector3(
+    (wb.min.x + wb.max.x) / 2, (wb.min.y + wb.max.y) / 2, (wb.min.z + wb.max.z) / 2
+  ).add(cabinOffset);
 
-  // wrap-around dash: knee panel + upper block + top pad + face
-  dark.push(box(0.44, 0.30, 1.42, 0.79, 0.40, 0));    // knee panel
-  dark.push(box(0.40, 0.26, 1.42, 0.76, 0.66, 0));    // upper block
-  dark.push(box(0.06, 0.50, 1.42, 0.545, 0.55, 0));   // vertical face
-  const pad = box(0.46, 0.045, 1.44, 0.73, 0.785, 0); // top pad, sloping away
-  soft.push(pad);
-
-  // carbon trim band across the dash face
-  carbon.push(box(0.02, 0.055, 1.34, 0.505, 0.755, 0));
-  // red ambient light line just under the trim (Audi signature)
-  ambient.push(box(0.016, 0.014, 1.36, 0.502, 0.712, 0));
-  // thin aluminum vent strips
-  alu.push(box(0.012, 0.018, 0.30, 0.502, 0.62, -0.46));
-  alu.push(box(0.012, 0.018, 0.30, 0.502, 0.62, 0.46));
-
-  car._addMeshes(dark, M.interior, false, false);
-  if (pad.rotation) pad.rotateZ(-0.085);              // nose-down slope
-  car._addMeshes(soft, M.interiorSoft, false, false);
-  car._addMeshes(carbon, M.carbon, false, false);
-  car._addMeshes(alu, M.alu, false, false);
-  const amb = car._addMeshes(ambient, M.ambient, false, false);
-  if (amb && car._ambientMeshes) car._ambientMeshes.push(amb);
-}
-
-// ------------------------------------------------------- steering wheel
-function _buildSteeringWheel(car) {
-  const M = car.mats;
-
-  car.steeringTilt = new THREE.Group();
-  car.steeringTilt.position.set(0.47, 0.80, DRIVER_Z);
-  car.steeringTilt.rotation.z = -0.42;      // column rake
-  car.body.add(car.steeringTilt);
-
-  car.steeringSpin = new THREE.Group();
-  car.steeringTilt.add(car.steeringSpin);
-
-  // --- flat-bottom rim: rounded extruded ring with bevels (high poly) -----
-  const rOut = 0.165, rIn = 0.128;
-  const flatY = -0.118, flatIn = -0.085;
-  const t1 = Math.asin(flatY / rOut);
-  const t2 = Math.PI - t1;
-  const t1i = Math.asin(flatIn / rIn);
-  const t2i = Math.PI - t1i;
-
-  const shape = new THREE.Shape();
-  shape.absarc(0, 0, rOut, t1, t2, false);          // over the top
-  shape.lineTo(rOut * Math.cos(t1), flatY);         // flat bottom chord
-  const hole = new THREE.Path();
-  hole.absarc(0, 0, rIn, t1i, t2i, false);
-  hole.lineTo(rIn * Math.cos(t1i), flatIn);
-  shape.holes.push(hole);
-
-  const rimGeo = new THREE.ExtrudeGeometry(shape, {
-    depth: 0.026, bevelEnabled: true,
-    bevelThickness: 0.011, bevelSize: 0.010, bevelSegments: 3,
-    curveSegments: 56
+  // body-space axes of the node (identity after the bake): the column axis is
+  // whichever local axis points most rearward (-X)
+  const rearward = new THREE.Vector3(-1, 0, 0); // toward the driver
+  let best = null, bestDot = -Infinity;
+  ['x', 'y', 'z'].forEach((a, i) => {
+    const axis = new THREE.Vector3().setComponent(i, 1);
+    const d = axis.dot(rearward);
+    if (d > bestDot) { bestDot = d; best = axis.clone(); }
   });
-  rimGeo.translate(0, 0, -0.013);
-  rimGeo.rotateY(Math.PI / 2);                      // wheel plane YZ, axis X
-  const rim = new THREE.Mesh(rimGeo, M.interiorSoft);
-  rim.castShadow = false;
-  car.steeringSpin.add(rim);
+  const axis = best.normalize();
+  if (axis.dot(rearward) < 0) axis.negate();
 
-  // --- spokes + pods (merged) ---------------------------------------------
-  const spokes = [];
-  spokes.push(box(0.024, 0.045, 0.16, 0, 0.004, 0.085));   // right spoke
-  spokes.push(box(0.024, 0.045, 0.16, 0, 0.004, -0.085));  // left spoke
-  spokes.push(box(0.024, 0.11, 0.05, 0, -0.078, 0));       // lower spoke
-  spokes.push(box(0.030, 0.058, 0.078, 0, 0.012, 0.095));  // right button pod
-  spokes.push(box(0.030, 0.058, 0.078, 0, 0.012, -0.095)); // left button pod
-  const spokeMesh = new THREE.Mesh(mergeGeometries(spokes, false), M.interior);
-  car.steeringSpin.add(spokeMesh);
+  const pivot = new THREE.Group();
+  pivot.position.copy(worldPos);
+  pivot.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), axis);
 
-  // button glow dots
-  const dots = [];
-  for (const zs of [0.075, 0.115, -0.075, -0.115]) {
-    dots.push(box(0.008, 0.010, 0.010, -0.020, 0.022, zs));
-  }
-  car.steeringSpin.add(new THREE.Mesh(mergeGeometries(dots, false), M.btnGlow));
+  // re-parent: weel carries only the cabin offset — express it relative to
+  // the pivot so the geometry stays exactly where it was
+  weel.parent.remove(weel);
+  pivot.add(weel);
+  weel.position.copy(cabinOffset).sub(pivot.position);
+  weel.quaternion.identity();
+  weel.scale.set(1, 1, 1);
+  car.body.add(pivot);
 
-  // --- hub: aluminum boss + Audi four rings --------------------------------
-  const hub = new THREE.Mesh(
-    new THREE.CylinderGeometry(0.048, 0.052, 0.045, 24).rotateZ(Math.PI / 2),
-    M.alu
-  );
-  car.steeringSpin.add(hub);
+  car.steeringSpin = pivot;
 
-  const rings = [];
-  for (let i = 0; i < 4; i++) {
-    const g = new THREE.TorusGeometry(0.0125, 0.0028, 8, 24);
-    g.rotateY(Math.PI / 2);
-    g.translate(0.028, 0, (i - 1.5) * 0.013);
-    rings.push(g);
-  }
-  car.steeringSpin.add(new THREE.Mesh(mergeGeometries(rings, false), M.chrome));
-
-  // red 12 o'clock center stripe (racing marker)
-  const stripe = new THREE.Mesh(box(0.020, 0.014, 0.05, 0, 0.160, 0), M.accent);
-  car.steeringSpin.add(stripe);
-
-  // column shroud
-  const column = new THREE.Mesh(
-    new THREE.CylinderGeometry(0.036, 0.046, 0.14, 12).rotateZ(Math.PI / 2),
-    M.interior
-  );
-  column.position.set(0.075, 0.03, 0);
-  car.steeringTilt.add(column);
-
-  // --- paddle shifters (column-mounted, do not spin) -----------------------
-  for (const side of [1, -1]) {
-    const paddle = new THREE.Mesh(box(0.014, 0.115, 0.048, 0, 0, 0), M.alu);
-    paddle.position.set(0.055, 0.012, side * 0.125);
-    paddle.rotation.x = side * -0.16;
-    car.steeringTilt.add(paddle);
-  }
-
-  // red "ENGINE START" button on the dash face
-  const startBtn = new THREE.Mesh(
-    new THREE.CylinderGeometry(0.018, 0.018, 0.014, 12).rotateZ(Math.PI / 2),
-    M.btnGlow
-  );
-  startBtn.position.set(0.498, 0.585, 0.10);
-  car.body.add(startBtn);
+  // remember where the wheel sits (model space) for cluster placement
+  car.wheelModelPos = worldPos.clone();
+  car.wheelAxis = axis.clone();
 }
 
-// ------------------------------------------------------------------ screens
-function _buildScreens(car) {
-  const M = car.mats;
+/**
+ * Instrument cluster: canvas-textured dial faces + REAL 3D needles.
+ * Positioned just beyond the steering wheel along its column axis.
+ */
+function buildCluster(car) {
+  const wp = car.wheelModelPos;
+  const axis = car.wheelAxis;
+  if (!wp || !axis) return;
 
-  // === Virtual Cockpit (behind the wheel) =================================
+  const group = new THREE.Group();
+  group.position.copy(wp).addScaledVector(axis, -0.36); // into the dash (axis points to the driver)
+  group.position.y += 0.08;                            // peek over the cowl
+  group.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), axis.clone());
+  car.body.add(group);
+
+  // binnacle hood so it reads as a physical unit
+  const hood = new THREE.Mesh(
+    new THREE.BoxGeometry(0.46, 0.24, 0.06),
+    car.mats.blackGloss
+  );
+  hood.position.set(0, 0, -0.035);
+  group.add(hood);
+
+  // canvas dial faces
   const cv = document.createElement('canvas');
-  cv.width = 512; cv.height = 256;
+  cv.width = 1024; cv.height = 480;
   car._clusterCanvas = cv;
   car._clusterCtx = cv.getContext('2d');
   car._clusterTex = new THREE.CanvasTexture(cv);
   car._clusterTex.colorSpace = THREE.SRGBColorSpace;
   car._clusterTex.anisotropy = 4;
 
-  const vcGroup = new THREE.Group();
-  vcGroup.position.set(0.70, 0.965, DRIVER_Z);
-  car.body.add(vcGroup);
-  faceAlong(vcGroup, new THREE.Vector3(-1, 0.15, 0));
+  const face = new THREE.Mesh(
+    new THREE.PlaneGeometry(0.44, 0.206),
+    new THREE.MeshBasicMaterial({ map: car._clusterTex, toneMapped: false })
+  );
+  face.position.z = 0.002;
+  group.add(face);
 
-  // bezel doubles as the binnacle (deep surround, no floating hood)
-  const vcBezel = new THREE.Mesh(box(0.055, 0.235, 0.46, 0.020, 0, 0), M.blackGloss);
-  vcGroup.add(vcBezel);
-  const vcFace = new THREE.Mesh(new THREE.PlaneGeometry(0.40, 0.19),
-    new THREE.MeshBasicMaterial({ map: car._clusterTex, toneMapped: false }));
-  vcFace.position.set(-0.006, 0, 0);
-  vcGroup.add(vcFace);
-  const pod = new THREE.Mesh(box(0.34, 0.10, 0.42, 0.74, 0.855, DRIVER_Z), M.interior);
-  car.body.add(pod);
+  // ---- physical needles (rpm left dial, speed right dial) -------------------
+  const mkNeedle = (px, py) => {
+    const pivot = new THREE.Group();
+    pivot.position.set(px, py, 0.012);
+    const shaft = new THREE.Mesh(
+      new THREE.BoxGeometry(0.0026, 0.086, 0.0035),
+      car.mats.needle
+    );
+    shaft.position.y = 0.043;                       // pivot at the base
+    pivot.add(shaft);
+    const tail = new THREE.Mesh(
+      new THREE.BoxGeometry(0.0034, 0.018, 0.0035),
+      car.mats.needle
+    );
+    tail.position.y = -0.009;
+    pivot.add(tail);
+    const hub = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.0075, 0.009, 0.008, 12).rotateX(Math.PI / 2),
+      car.mats.blackGloss
+    );
+    pivot.add(hub);
+    group.add(pivot);
+    return pivot;
+  };
+  car.needleRPM = mkNeedle(-0.108, -0.012);
+  car.needleSpeed = mkNeedle(0.108, -0.012);
+  car.clusterGroup = group;
 
-  // === MMI touchscreen (center console) ===================================
+  car.drawCluster = drawCluster;
+}
+
+/** MMI-style center screen with the live minimap. */
+function buildMMI(car) {
+  const wp = car.wheelModelPos;
+  const axis = car.wheelAxis;
+  if (!wp || !axis) return;
+
+  const group = new THREE.Group();
+  // right of the wheel, slightly further into the dash, angled to the driver
+  const right = new THREE.Vector3(axis.z, 0, -axis.x).normalize(); // lateral, car-right
+  group.position.copy(wp).addScaledVector(axis, -0.30).addScaledVector(right, 0.38);
+  group.position.y += 0.10;
+  group.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1),
+    axis.clone().addScaledVector(right, -0.3).normalize());
+  car.body.add(group);
+
+  const bezel = new THREE.Mesh(
+    new THREE.BoxGeometry(0.30, 0.20, 0.025),
+    car.mats.blackGloss
+  );
+  bezel.position.set(0, 0, -0.014);
+  group.add(bezel);
+
   const mm = document.createElement('canvas');
   mm.width = 320; mm.height = 208;
   car._mmiCanvas = mm;
@@ -283,17 +326,12 @@ function _buildScreens(car) {
   car._mmiTex.colorSpace = THREE.SRGBColorSpace;
   car._mmiTex.anisotropy = 2;
 
-  const mmiGroup = new THREE.Group();
-  mmiGroup.position.set(0.565, 0.87, 0.05);
-  car.body.add(mmiGroup);
-  faceAlong(mmiGroup, new THREE.Vector3(-0.95, 0.15, -0.28).normalize());
-
-  const mmiBezel = new THREE.Mesh(box(0.020, 0.185, 0.29, 0.010, 0, 0), M.blackGloss);
-  mmiGroup.add(mmiBezel);
-  const mmiFace = new THREE.Mesh(new THREE.PlaneGeometry(0.26, 0.165),
-    new THREE.MeshBasicMaterial({ map: car._mmiTex, toneMapped: false }));
-  mmiFace.position.set(-0.003, 0, 0);
-  mmiGroup.add(mmiFace);
+  const face = new THREE.Mesh(
+    new THREE.PlaneGeometry(0.28, 0.182),
+    new THREE.MeshBasicMaterial({ map: car._mmiTex, toneMapped: false })
+  );
+  face.position.z = 0.002;
+  group.add(face);
 
   // cache a simplified track polyline for the minimap
   car._mmiPts = null;
@@ -316,107 +354,44 @@ function _buildScreens(car) {
     car._mmiPts = pts.map(([x, z]) => [ox + x * scale, oz + z * scale]);
   }
   car._mmiAcc = 1;
+  car.drawMMI = drawMMI;
 }
 
-// ------------------------------------------------------------------ seats
-function _buildSeats(car) {
+/** Pedals, shifter and handbrake placed relative to the steering wheel. */
+function buildControls(car) {
   const M = car.mats;
-  const soft = [], dark = [], red = [];
+  const wp = car.wheelModelPos || new THREE.Vector3(0.47, 0.80, -0.33);
+  const dz = wp.z;                                  // driver lateral position
 
-  for (const dz of [DRIVER_Z, -DRIVER_Z]) {
-    // cushion + bolsters
-    soft.push(box(0.52, 0.11, 0.50, -0.30, 0.30, dz));
-    soft.push(box(0.44, 0.08, 0.06, -0.30, 0.365, dz + 0.235));
-    soft.push(box(0.44, 0.08, 0.06, -0.30, 0.365, dz - 0.235));
-    // backrest (reclined) + bolsters + headrest
-    const back = box(0.13, 0.62, 0.48, -0.60, 0.645, dz);
-    soft.push(back);
-    soft.push(box(0.13, 0.52, 0.07, -0.60, 0.65, dz + 0.245));
-    soft.push(box(0.13, 0.52, 0.07, -0.60, 0.65, dz - 0.245));
-    soft.push(box(0.10, 0.18, 0.26, -0.68, 1.02, dz));
-    // RS red accent: center stripe + cushion stitch line
-    red.push(box(0.135, 0.48, 0.11, -0.585, 0.63, dz));
-    red.push(box(0.47, 0.025, 0.05, -0.30, 0.358, dz));
-    // seat side airbag tag
-    dark.push(box(0.02, 0.10, 0.06, -0.52, 0.72, dz + 0.26));
-  }
-
-  car._addMeshes(soft, M.interiorSoft, false, false);
-  car._addMeshes(dark, M.interior, false, false);
-  car._addMeshes(red, M.redLeather, false, false);
-}
-
-// ------------------------------------------------------------------ controls
-function _buildControls(car) {
-  const M = car.mats;
-  const alu = [], dark = [];
-
-  // aluminum sport pedals (driver footwell)
   car.pedalThrottle = new THREE.Mesh(new THREE.BoxGeometry(0.025, 0.13, 0.07), M.interiorSoft);
-  car.pedalThrottle.position.set(0.92, 0.34, DRIVER_Z + 0.10);
+  car.pedalThrottle.position.set(1.02, 0.34, dz + 0.10);
   car.pedalThrottle.rotation.z = -0.35;
   car.body.add(car.pedalThrottle);
 
   car.pedalBrake = new THREE.Mesh(new THREE.BoxGeometry(0.025, 0.15, 0.09), M.interiorSoft);
-  car.pedalBrake.position.set(0.92, 0.37, DRIVER_Z - 0.05);
+  car.pedalBrake.position.set(1.02, 0.37, dz - 0.05);
   car.pedalBrake.rotation.z = -0.35;
   car.body.add(car.pedalBrake);
 
-  // dead pedal + footrest
-  const dead = new THREE.Mesh(new THREE.BoxGeometry(0.02, 0.10, 0.06), M.alu);
-  dead.position.set(0.95, 0.33, DRIVER_Z - 0.19);
-  car.body.add(dead);
-  alu.push(box(0.10, 0.02, 0.05, 0.78, 0.245, DRIVER_Z + 0.10));
-
-  // gear shifter (animated by Car.updateVisual)
+  // gear shifter on the tunnel
   car.shifterGroup = new THREE.Group();
-  car.shifterGroup.position.set(-0.10, 0.50, -0.02);
+  car.shifterGroup.position.set(0.05, 0.46, dz + 0.30);
   car.body.add(car.shifterGroup);
   const boot = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.075, 0.09, 10), M.interior);
   boot.position.y = 0.03;
   car.shifterGroup.add(boot);
-  const lever = new THREE.Mesh(new THREE.CylinderGeometry(0.014, 0.018, 0.24, 8), M.interiorSoft);
-  lever.position.y = 0.17;
+  const lever = new THREE.Mesh(new THREE.CylinderGeometry(0.014, 0.018, 0.22, 8), M.interiorSoft);
+  lever.position.y = 0.16;
   car.shifterGroup.add(lever);
-  const knob = new THREE.Mesh(new THREE.SphereGeometry(0.036, 16, 12), M.alu);
-  knob.position.y = 0.30;
+  const knob = new THREE.Mesh(new THREE.SphereGeometry(0.034, 16, 12), M.alu);
+  knob.position.y = 0.28;
   car.shifterGroup.add(knob);
-  const knobRing = new THREE.Mesh(new THREE.TorusGeometry(0.024, 0.005, 6, 16).rotateX(Math.PI / 2), M.accent);
-  knobRing.position.y = 0.288;
-  car.shifterGroup.add(knobRing);
 
   // handbrake
-  const hbBase = new THREE.Mesh(new THREE.BoxGeometry(0.22, 0.05, 0.06), M.interior);
-  hbBase.position.set(-0.05, 0.52, 0.13);
-  car.body.add(hbBase);
-  car.handbrakeLever = new THREE.Mesh(new THREE.CylinderGeometry(0.018, 0.022, 0.26, 8), M.alu);
-  car.handbrakeLever.position.set(-0.14, 0.63, 0.13);
+  car.handbrakeLever = new THREE.Mesh(new THREE.CylinderGeometry(0.016, 0.02, 0.24, 8), M.alu);
+  car.handbrakeLever.position.set(-0.02, 0.56, dz + 0.34);
   car.handbrakeLever.rotation.z = 0.9;
   car.body.add(car.handbrakeLever);
-
-  car._addMeshes(alu, M.alu, false, false);
-  car._addMeshes(dark, M.interior, false, false);
-}
-
-// ------------------------------------------------------------------ driver
-function _buildDriver(car) {
-  const g = new THREE.Group();
-  const helmet = new THREE.Mesh(new THREE.SphereGeometry(0.125, 16, 12), car.mats.helmet);
-  helmet.position.set(-0.12, 1.005, DRIVER_Z);
-  g.add(helmet);
-  const visor = new THREE.Mesh(
-    new THREE.SphereGeometry(0.127, 16, 8, 0.6, 1.9, 1.1, 0.7),
-    car.mats.helmetVisor
-  );
-  visor.position.set(-0.12, 1.005, DRIVER_Z);
-  visor.rotation.y = Math.PI / 2;
-  g.add(visor);
-  const shoulders = new THREE.Mesh(new THREE.BoxGeometry(0.30, 0.16, 0.44), car.mats.interiorSoft);
-  shoulders.position.set(-0.30, 0.82, DRIVER_Z);
-  g.add(shoulders);
-  g.traverse((o) => { if (o.isMesh) o.castShadow = false; });
-  car.body.add(g);
-  car.helmet = g;
 }
 
 // ===================================================================
@@ -426,7 +401,7 @@ function _buildDriver(car) {
 export function drawCluster(car, rpmNorm, speedKmh, gearLabel, limiter, race = null) {
   const ctx = car._clusterCtx;
   if (!ctx) return;
-  const W = 512, H = 256;
+  const W = 1024, H = 480;
 
   const fmtLap = (t) => {
     if (t == null) return '--:--.---';
@@ -437,142 +412,173 @@ export function drawCluster(car, rpmNorm, speedKmh, gearLabel, limiter, race = n
 
   // background
   const bg = ctx.createLinearGradient(0, 0, 0, H);
-  bg.addColorStop(0, '#0a0e14');
-  bg.addColorStop(1, '#04060a');
+  bg.addColorStop(0, '#07090d');
+  bg.addColorStop(1, '#020304');
   ctx.fillStyle = bg;
   ctx.fillRect(0, 0, W, H);
 
   const RED = '#e6001e';
+  const AMBER = '#ff9d14';
   const WHITE = '#f2f4f6';
   const GREY = '#8a939e';
-  const TRACK = '#242b34';
+  const TRACK = '#232a33';
 
   // --- shift LEDs (top center) ---------------------------------------------
-  const ledN = 7;
+  const ledN = 9;
   const lit = Math.min(ledN, Math.round(rpmNorm * ledN));
   for (let i = 0; i < ledN; i++) {
-    const x = W / 2 - (ledN * 22) / 2 + i * 22;
-    let c = '#161b22';
-    if (i < lit) c = i < 4 ? '#2ecc71' : i < 6 ? RED : '#3f7bff';
+    const x = W / 2 - (ledN * 30) / 2 + i * 30;
+    let c = '#141a21';
+    if (i < lit) c = i < 5 ? '#2ecc71' : i < 7 ? RED : '#3f7bff';
     ctx.fillStyle = c;
     ctx.beginPath();
-    ctx.arc(x + 8, 20, 6, 0, Math.PI * 2);
+    ctx.arc(x + 10, 32, 9, 0, Math.PI * 2);
     ctx.fill();
   }
 
-  // --- tach dial (left) ------------------------------------------------------
-  const cx = 122, cy = 138, r = 92;
+  // --- tach dial (left) — needle is a real 3D mesh, canvas draws the face ---
+  const cx = 262, cy = 262, r = 178;
   const a0 = Math.PI * 0.75, a1 = Math.PI * 2.25;
-  ctx.lineWidth = 10;
+  ctx.lineWidth = 18;
   ctx.strokeStyle = TRACK;
   ctx.beginPath(); ctx.arc(cx, cy, r, a0, a1); ctx.stroke();
-  // redline zone
   ctx.strokeStyle = RED;
-  ctx.beginPath(); ctx.arc(cx, cy, r, a0 + (a1 - a0) * 0.90, a1); ctx.stroke();
-  // active arc
+  ctx.beginPath(); ctx.arc(cx, cy, r, a0 + (a1 - a0) * 0.88, a1); ctx.stroke();
   const hot = limiter || rpmNorm > 0.88;
   ctx.strokeStyle = hot ? RED : WHITE;
+  ctx.lineWidth = 7;
   ctx.beginPath();
   ctx.arc(cx, cy, r, a0, a0 + (a1 - a0) * Math.min(1, rpmNorm));
   ctx.stroke();
   // ticks + numbers
-  ctx.lineWidth = 2;
+  ctx.lineWidth = 3;
   for (let i = 0; i <= 8; i++) {
     const a = a0 + (a1 - a0) * (i / 8);
     ctx.strokeStyle = GREY;
     ctx.beginPath();
-    ctx.moveTo(cx + Math.cos(a) * (r - 12), cy + Math.sin(a) * (r - 12));
+    ctx.moveTo(cx + Math.cos(a) * (r - 22), cy + Math.sin(a) * (r - 22));
     ctx.lineTo(cx + Math.cos(a) * r, cy + Math.sin(a) * r);
     ctx.stroke();
     ctx.fillStyle = GREY;
-    ctx.font = '600 13px system-ui, sans-serif';
+    ctx.font = '600 26px system-ui, sans-serif';
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
-    ctx.fillText(String(i), cx + Math.cos(a) * (r - 24), cy + Math.sin(a) * (r - 24));
+    ctx.fillText(String(i), cx + Math.cos(a) * (r - 48), cy + Math.sin(a) * (r - 48));
   }
-  // needle
+  // the canvas keeps a faint ghost needle; the 3D needle does the real sweep
   const na = a0 + (a1 - a0) * Math.min(1, rpmNorm);
-  ctx.strokeStyle = WHITE;
-  ctx.lineWidth = 4;
+  ctx.strokeStyle = hot ? 'rgba(230,0,30,0.35)' : 'rgba(242,244,246,0.28)';
+  ctx.lineWidth = 7;
   ctx.beginPath();
-  ctx.moveTo(cx - Math.cos(na) * 10, cy - Math.sin(na) * 10);
-  ctx.lineTo(cx + Math.cos(na) * (r - 14), cy + Math.sin(na) * (r - 14));
+  ctx.moveTo(cx - Math.cos(na) * 18, cy - Math.sin(na) * 18);
+  ctx.lineTo(cx + Math.cos(na) * (r - 20), cy + Math.sin(na) * (r - 20));
   ctx.stroke();
-  ctx.fillStyle = '#11151b';
-  ctx.beginPath(); ctx.arc(cx, cy, 9, 0, Math.PI * 2); ctx.fill();
+  ctx.fillStyle = '#0c0f14';
+  ctx.beginPath(); ctx.arc(cx, cy, 17, 0, Math.PI * 2); ctx.fill();
   ctx.fillStyle = GREY;
-  ctx.font = '600 11px system-ui, sans-serif';
-  ctx.fillText('1/min ×1000', cx, cy + 34);
+  ctx.font = '600 20px system-ui, sans-serif';
+  ctx.fillText('1/min ×1000', cx, cy + 62);
 
-  // --- speed dial (right) ------------------------------------------------------
-  const sx = 394, sy = 138;
-  // progress arc around the number
-  const spN = Math.min(1, speedKmh / 260);
-  ctx.lineWidth = 6;
+  // --- speed dial (right) — same split: face here, 3D needle in space ------
+  const sx = W - 262, sy = 262;
+  const spN = Math.min(1, speedKmh / 280);
+  ctx.lineWidth = 14;
   ctx.strokeStyle = TRACK;
-  ctx.beginPath(); ctx.arc(sx, sy, 74, a0, a1); ctx.stroke();
+  ctx.beginPath(); ctx.arc(sx, sy, r, a0, a1); ctx.stroke();
   ctx.strokeStyle = spN > 0.82 ? RED : WHITE;
-  ctx.beginPath(); ctx.arc(sx, sy, 74, a0, a0 + (a1 - a0) * spN); ctx.stroke();
-  // big speed number
+  ctx.lineWidth = 6;
+  ctx.beginPath(); ctx.arc(sx, sy, r, a0, a0 + (a1 - a0) * spN); ctx.stroke();
+  ctx.lineWidth = 3;
+  for (let i = 0; i <= 14; i++) {
+    const a = a0 + (a1 - a0) * (i / 14);
+    ctx.strokeStyle = GREY;
+    ctx.beginPath();
+    ctx.moveTo(sx + Math.cos(a) * (r - 16), sy + Math.sin(a) * (r - 16));
+    ctx.lineTo(sx + Math.cos(a) * r, sy + Math.sin(a) * r);
+    ctx.stroke();
+    if (i % 2 === 0) {
+      ctx.fillStyle = GREY;
+      ctx.font = '600 22px system-ui, sans-serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(String(i * 20), sx + Math.cos(a) * (r - 44), sy + Math.sin(a) * (r - 44));
+    }
+  }
+  const nsa = a0 + (a1 - a0) * spN;
+  ctx.strokeStyle = 'rgba(242,244,246,0.28)';
+  ctx.lineWidth = 6;
+  ctx.beginPath();
+  ctx.moveTo(sx - Math.cos(nsa) * 18, sy - Math.sin(nsa) * 18);
+  ctx.lineTo(sx + Math.cos(nsa) * (r - 20), sy + Math.sin(nsa) * (r - 20));
+  ctx.stroke();
+  ctx.fillStyle = '#0c0f14';
+  ctx.beginPath(); ctx.arc(sx, sy, 17, 0, Math.PI * 2); ctx.fill();
   ctx.fillStyle = WHITE;
-  ctx.font = '800 62px system-ui, sans-serif';
+  ctx.font = '800 58px system-ui, sans-serif';
   ctx.textAlign = 'center';
-  ctx.textBaseline = 'middle';
-  ctx.fillText(String(Math.round(speedKmh)), sx, sy - 4);
+  ctx.fillText(String(Math.round(speedKmh)), sx, sy + 92);
   ctx.fillStyle = GREY;
-  ctx.font = '600 14px system-ui, sans-serif';
-  ctx.fillText('km/h', sx, sy + 34);
+  ctx.font = '600 22px system-ui, sans-serif';
+  ctx.fillText('km/h', sx, sy + 122);
 
   // --- gear (center) ------------------------------------------------------------
   ctx.strokeStyle = '#1d242d';
-  ctx.lineWidth = 2;
-  ctx.strokeRect(W / 2 - 27, 118, 54, 54);
-  ctx.fillStyle = gearLabel === 'R' ? '#ff9d14' : gearLabel === 'N' ? '#c8ced6' : RED;
-  ctx.font = '800 44px system-ui, sans-serif';
+  ctx.lineWidth = 3;
+  ctx.strokeRect(W / 2 - 52, 218, 104, 104);
+  ctx.fillStyle = gearLabel === 'R' ? AMBER : gearLabel === 'N' ? '#c8ced6' : RED;
+  ctx.font = '800 86px system-ui, sans-serif';
   ctx.textAlign = 'center';
-  ctx.fillText(gearLabel, W / 2, 146);
+  ctx.fillText(gearLabel, W / 2, 272);
   ctx.fillStyle = GREY;
-  ctx.font = '600 12px system-ui, sans-serif';
-  ctx.fillText(limiter ? 'SHIFT' : 'S TRONIC', W / 2, 196);
+  ctx.font = '600 22px system-ui, sans-serif';
+  ctx.fillText(limiter ? 'SHIFT NOW' : 'PDK', W / 2, 356);
 
   // wordmark
   ctx.fillStyle = '#4a545f';
-  ctx.font = '700 13px system-ui, sans-serif';
+  ctx.font = '700 24px system-ui, sans-serif';
   ctx.textAlign = 'left';
-  ctx.fillText('APEX  R8', 16, H - 16);
+  ctx.fillText('APEX 911', 30, H - 28);
   ctx.textAlign = 'right';
-  ctx.fillText('QUATTRO', W - 16, H - 16);
+  ctx.fillText('CARRERA 4S', W - 30, H - 28);
 
-  // --- lap info (top corners, needs the race system) -----------------------
+  // --- lap info (top corners) ------------------------------------------------
   if (race) {
     ctx.textAlign = 'left';
     ctx.fillStyle = GREY;
-    ctx.font = '700 13px system-ui, sans-serif';
-    ctx.fillText(`LAP ${Math.min(race.lap, race.totalLaps)}/${race.totalLaps}`, 16, 44);
+    ctx.font = '700 24px system-ui, sans-serif';
+    ctx.fillText(`LAP ${Math.min(race.lap, race.totalLaps)}/${race.totalLaps}`, 30, 74);
     ctx.fillStyle = WHITE;
-    ctx.font = '600 15px system-ui, sans-serif';
+    ctx.font = '600 28px system-ui, sans-serif';
     const last = race.lapTimes.length ? race.lapTimes[race.lapTimes.length - 1] : null;
-    ctx.fillText(fmtLap(last), 16, 66);
+    ctx.fillText(fmtLap(last), 30, 116);
     ctx.fillStyle = GREY;
-    ctx.font = '600 11px system-ui, sans-serif';
-    ctx.fillText('BEST ' + fmtLap(race.bestLap), 16, 86);
+    ctx.font = '600 21px system-ui, sans-serif';
+    ctx.fillText('BEST ' + fmtLap(race.bestLap), 30, 152);
     ctx.textAlign = 'right';
     ctx.fillStyle = limiter ? RED : '#6fd06f';
-    ctx.font = '700 13px system-ui, sans-serif';
-    ctx.fillText('D ' + gearLabel, W - 16, 44);
+    ctx.font = '700 24px system-ui, sans-serif';
+    ctx.fillText('D ' + gearLabel, W - 30, 74);
     ctx.fillStyle = GREY;
-    ctx.font = '600 11px system-ui, sans-serif';
-    ctx.fillText('S TRONIC', W - 16, 66);
+    ctx.font = '600 21px system-ui, sans-serif';
+    ctx.fillText('PDK AUTO', W - 30, 116);
   }
 
   // limiter border pulse
   if (limiter) {
-    ctx.strokeStyle = 'rgba(230,0,30,0.8)';
-    ctx.lineWidth = 4;
-    ctx.strokeRect(2, 2, W - 4, H - 4);
+    ctx.strokeStyle = 'rgba(230,0,30,0.85)';
+    ctx.lineWidth = 8;
+    ctx.strokeRect(4, 4, W - 8, H - 8);
   }
 
   car._clusterTex.needsUpdate = true;
+
+  // ---- physical needles -------------------------------------------------------
+  if (car.needleRPM) {
+    car.needleRPM.rotation.z = -a0 - (a1 - a0) * Math.min(1, rpmNorm);
+  }
+  if (car.needleSpeed) {
+    car.needleSpeed.rotation.z = -a0 - (a1 - a0) * Math.min(1, speedKmh / 280);
+  }
 }
 
 // ===================================================================
@@ -587,7 +593,6 @@ export function drawMMI(car, progress) {
   ctx.fillStyle = '#070a0e';
   ctx.fillRect(0, 0, W, H);
 
-  // header
   ctx.fillStyle = '#0d1218';
   ctx.fillRect(0, 0, W, 24);
   ctx.fillStyle = '#c8ced6';
@@ -598,7 +603,6 @@ export function drawMMI(car, progress) {
   ctx.fillStyle = '#e6001e';
   ctx.fillText('● REC', W - 52, 12);
 
-  // map grid
   ctx.strokeStyle = 'rgba(255,255,255,0.045)';
   ctx.lineWidth = 1;
   for (let x = 0; x < W; x += 32) {
@@ -610,7 +614,6 @@ export function drawMMI(car, progress) {
 
   const pts = car._mmiPts;
   if (pts && pts.length > 2) {
-    // track ribbon
     ctx.lineJoin = 'round';
     ctx.lineCap = 'round';
     ctx.strokeStyle = '#2c343e';
@@ -624,7 +627,6 @@ export function drawMMI(car, progress) {
     ctx.lineWidth = 4;
     ctx.stroke();
 
-    // start/finish tick
     ctx.strokeStyle = '#e8ecef';
     ctx.lineWidth = 3;
     ctx.beginPath();
@@ -632,7 +634,6 @@ export function drawMMI(car, progress) {
     ctx.lineTo(pts[0][0] + 5, pts[0][1] + 5);
     ctx.stroke();
 
-    // car dot (interpolate along the cached polyline by progress)
     const fi = progress * pts.length;
     const i0 = Math.floor(fi) % pts.length;
     const i1 = (i0 + 1) % pts.length;
@@ -650,7 +651,6 @@ export function drawMMI(car, progress) {
     ctx.fillText('APEX CIRCUIT', W / 2, H / 2);
   }
 
-  // footer
   ctx.fillStyle = '#5a6570';
   ctx.font = '600 10px system-ui, sans-serif';
   ctx.textAlign = 'left';

@@ -4,10 +4,12 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
   <meta name="theme-color" content="#0b0f14" />
-  <meta name="description" content="Apex Circuit — a 3D arcade racing game with an Audi-inspired cockpit, V10-style sound and real gearbox physics that runs in your browser. Three laps, drifting physics, touch controls." />
+  <meta name="description" content="Apex Circuit — a 3D arcade racing game with a Porsche 911, a fully animated XJ220 cockpit with moving gauge needles, real gearbox physics and an offline install that downloads the whole game onto your device. Three laps, drifting physics, touch controls." />
   <meta name="mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <link rel="manifest" href="./manifest.webmanifest" />
+  <link rel="apple-touch-icon" href="./favicon.svg" />
   <link rel="icon" type="image/svg+xml" href="./favicon.svg" />
   <title>Apex Circuit — 3D Arcade Racer</title>
   <style>
@@ -34,7 +36,11 @@
   <!-- Loading -->
   <div id="loading-screen" class="screen">
     <div class="spinner"></div>
-    <div style="font-size:15px; letter-spacing:4px; font-weight:600;">LOADING TRACK…</div>
+    <div id="loading-label" style="font-size:15px; letter-spacing:4px; font-weight:600;">LOADING TRACK…</div>
+    <div style="width:min(420px, 70vw); height:4px; border-radius:2px; background:rgba(255,255,255,.12); margin-top:16px; overflow:hidden;">
+      <div id="loading-bar" style="width:0%; height:100%; background:linear-gradient(90deg,#ff3b30,#ff9d14); transition:width .25s ease;"></div>
+    </div>
+    <div id="download-state" style="margin-top:12px; font-size:11px; letter-spacing:2px; color:rgba(255,255,255,.45);"></div>
   </div>
 
   <!-- Start screen -->
@@ -44,6 +50,7 @@
       <h1 class="start-title">APEX<span> CIRCUIT</span></h1>
       <p class="start-sub">3 laps &middot; 3 checkpoints per lap &middot; beat your best time</p>
       <button id="start-button" class="start-btn" type="button">TAP / PRESS ANY KEY TO START</button>
+      <button id="install-button" class="install-btn" type="button" style="display:none;">⤓ INSTALL GAME ON DEVICE</button>
       <div class="start-controls">
         <div><b>Drive</b> W A S D or Arrow keys &nbsp;&middot;&nbsp; <b>Handbrake</b> Space</div>
         <div><b>Gears (manual)</b> Q / E &nbsp;&middot;&nbsp; <b>Camera</b> V &nbsp;&middot;&nbsp; <b>Transmission</b> M &nbsp;&middot;&nbsp; <b>Reset</b> R &nbsp;&middot;&nbsp; <b>Settings</b> Esc</div>

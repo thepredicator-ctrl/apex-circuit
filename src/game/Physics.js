@@ -316,6 +316,7 @@ export class VehiclePhysics {
         this.velocity.z -= rZ * vNormal * (1 + CAR.wallBounce);
         if (impact > 1.5) this.velocity.multiplyScalar(CAR.wallSpeedScrub);
         this.justHitWall = impact > 2.5;
+        this.hitImpact = impact;   // m/s of the closing speed (for audio)
       }
       this.vF = this.velocity.dot(_fwd1);
       this.vL = this.velocity.dot(_right1);

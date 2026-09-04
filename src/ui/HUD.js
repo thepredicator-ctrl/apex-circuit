@@ -83,6 +83,19 @@ const TEMPLATE = `
       </div>
     </div>
     <div class="settings-row">
+      <span class="settings-label">Paint</span>
+      <div class="settings-seg settings-paints" id="set-paint">
+        <button data-v="guardsRed" type="button" title="Guards Red" style="--pc:#c00d1e"></button>
+        <button data-v="gtSilver" type="button" title="GT Silver" style="--pc:#d6d8dc"></button>
+        <button data-v="nightBlue" type="button" title="Night Blue" style="--pc:#12306e"></button>
+        <button data-v="speedYellow" type="button" title="Speed Yellow" style="--pc:#e8c414"></button>
+        <button data-v="jetBlack" type="button" title="Jet Black" style="--pc:#0a0b0d"></button>
+        <button data-v="irishGreen" type="button" title="Irish Green" style="--pc:#0f5132"></button>
+        <button data-v="arcticGrey" type="button" title="Arctic Grey" style="--pc:#8b9096"></button>
+        <button data-v="orange" type="button" title="Lava Orange" style="--pc:#e05206"></button>
+      </div>
+    </div>
+    <div class="settings-row">
       <span class="settings-label">Master volume</span>
       <input type="range" id="set-master" min="0" max="1" step="0.05">
     </div>
@@ -137,6 +150,7 @@ export class HUD {
     this._wireSeg('set-trans', (v) => this.settingsCb('transmission', v));
     this._wireSeg('set-cam', (v) => this.settingsCb('camera', v));
     this._wireSeg('set-quality', (v) => this.settingsCb('quality', v));
+    this._wireSeg('set-paint', (v) => this.settingsCb('paint', v));
     const wireRange = (id, key) => {
       const el = $(id);
       el.addEventListener('input', () => this.settingsCb(key, parseFloat(el.value)));
@@ -172,6 +186,7 @@ export class HUD {
     mark('set-trans', data.transmission);
     mark('set-cam', data.camera);
     mark('set-quality', data.quality);
+    if (data.paint) mark('set-paint', data.paint);
     document.getElementById('set-master').value = data.masterVolume;
     document.getElementById('set-engine').value = data.engineVolume;
     document.getElementById('set-steer').value = data.steerSensitivity;

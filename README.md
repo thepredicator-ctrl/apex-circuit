@@ -1,38 +1,41 @@
 # Apex Circuit — 3D Arcade Racer
 
-A polished, lightweight 3D arcade racing game that runs in modern desktop and
+A polished 3D arcade racing game that runs in modern desktop and
 mobile/tablet browsers — **play it live:
-https://thepredicator-ctrl.github.io/apex-circuit/** — featuring an
-Audi-inspired R8/RS-style cockpit, a real gearbox with manual / automatic
-modes, weight-transfer physics, elevation + banked corners and large touch
-controls. Built entirely with **HTML, CSS, JavaScript and
-[Three.js](https://threejs.org/)**, bundled by **Vite**. No external assets,
-no CDNs at runtime: every mesh, texture and sound is generated procedurally
-in code, and the production build bundles all dependencies into static files.
+https://thepredicator-ctrl.github.io/apex-circuit/** — featuring a real
+**Porsche 911 Carrera 4S** with four independently animated wheels (spin,
+steer, suspension travel), a **Jaguar XJ220 cockpit** with an animated
+steering wheel and a live instrument cluster with **physical moving
+needles**, a real gearbox with manual / automatic modes, weight-transfer
+physics, elevation + banked corners, an instanced GLB tree forest and large
+touch controls. Built with **HTML, CSS, JavaScript and
+[Three.js](https://threejs.org/)**, bundled by **Vite**. Engine and
+environment audio are synthesized live (no samples), and the production
+build **pre-downloads the entire game onto your device** via a service
+worker so it installs like an app and plays fully offline.
 
 ![Tech](https://img.shields.io/badge/Three.js-r182-049ef4) ![Vite](https://img.shields.io/badge/Vite-7-9575ff) ![License](https://img.shields.io/badge/license-MIT-green)
 
 ## Features
 
-- **Audi-inspired GT racer** (unofficial fan tribute) — sculpted hull with
-  proper **wheel arches: body-coloured flares + dark wheel-well liners** (no
-  tire clipping through the bodywork), singleframe-style grille with
-  **four-rings badges** front and rear, front/rear bumpers with intake &
-  diffuser, hood bulge, side skirts, doors with seams and handles, side
-  mirrors, big racing wing with endplates, quad exhausts, LED-look lights,
-  full-width tail bar and turn indicators
-- **Audi RS/R8-style cockpit** (LHD) — **high-poly flat-bottom sport
-  steering wheel** (extruded bevelled rim, four-rings hub, red 12 o'clock
-  stripe, button pods, aluminum **paddle shifters**) that rotates with your
-  input, a live **"Virtual Cockpit" widescreen instrument display** (Audi-red
-  tach arc, digital speed, gear, 7 shift LEDs), a center **MMI touchscreen
-  with a live minimap** drawn from the actual track spline (the car dot moves
-  in real time), RS bucket seats with red accents, aluminum sport pedals,
-  red ambient light strips, ENGINE START button, animated gear shifter and
-  handbrake
-- **Proper wheel assemblies** — tire, 5-spoke rim, brake disc and caliper per
-  corner; front wheels steer, all wheels spin at exactly `v / r`, rear wheels
-  flare on wheelspin, and every wheel moves independently on its suspension
+- **Porsche 911 Carrera 4S exterior** (Karol Miklas, CC-BY-SA-4.0) — the
+  real body, glass, lights and brake calipers, upgraded with clearcoat
+  paint presets (**8 factory colors** selectable in Settings), emissive
+  headlamps with spotlight beams + lens halos, and a brake-reactive rear
+  light bar
+- **Four animated wheels split from the model's merged axles** — every
+  corner spins at exactly `v / r` around its true hub, front wheels **steer
+  around their own kingpin axis**, every wheel travels independently on its
+  suspension, and dark wheel-well liners keep the arches looking solid
+- **Jaguar XJ220 cockpit** (Gerhald, CC-BY-4.0) mirrored to LHD — the
+  model's **steering wheel is re-pivoted around its column axis and rotates
+  ~137° lock-to-lock** with your input, sport pedals + shifter + handbrake
+  are rigged to the drivetrain state
+- **Instrument cluster with physical moving needles** — a canvas-drawn
+  dual-dial face (tach + speed, shift LEDs, gear, lap timing) with **real
+  3D red needles** sweeping the dials at 20 Hz, plus an **MMI-style center
+  screen** showing the live track minimap with the car dot moving in real
+  time
 - **First-person cockpit camera** (`V`) — sits at the driver's head, rides
   the suspension and banking, dips under braking, leans in corners; the
   in-dash cluster shows live RPM / speed / gear
@@ -53,7 +56,7 @@ in code, and the production build bundles all dependencies into static files.
   areas, terrain mesh that follows the road height
 - **Complete 3D circuit** — closed Catmull-Rom spline (~1.3 km) with asphalt,
   painted edge lines, red/white curbs, concrete walls with tire stacks,
-  grass, ~150 trees, a grandstand, brake-marker boards, sponsor boards,
+  grass, a **forest of ~150 instanced GLB trees** (TechArtBGN, CC-BY-4.0), a grandstand, brake-marker boards, sponsor boards,
   light poles, start/finish gantry with a **5-lamp start-light tree**,
   checkpoint gates, distant mountains, clouds, gradient sky, fog and
   dynamic shadows
@@ -69,16 +72,18 @@ in code, and the production build bundles all dependencies into static files.
   **speed-line streaks** that fade in above ~100 km/h for a real sense of
   speed
 - **Settings menu** (Esc or the HUD button) — automatic/manual transmission,
-  camera mode, graphics quality (LOW / MEDIUM / HIGH), master & engine
-  volume, steering speed, camera smoothing — persisted via `localStorage`
-- **Procedural V10-style audio** (Web Audio API) — four oscillator layers
-  (harmonic-rich fundamental, half-order sub rumble, double-frequency
-  scream, 1.5-order rasp) tracking the real firing frequency
-  `rpm/60 × 5`, shaped by a moving formant filter, combustion roar noise
-  locked to the firing rate, load-dependent lowpass, soft clipper and
-  compressor — plus **exhaust crackles on lift-off and downshifts**, idle
-  burble, intake hiss, shift clacks/blips, tire screech, wind rush, cabin
-  rumble and curb rumble. The game runs silently if audio is unavailable
+  camera mode, graphics quality (LOW / MEDIUM / HIGH), **paint color**, master
+  & engine volume, steering speed, camera smoothing — persisted via
+  `localStorage`
+- **Procedural flat-six engine audio** (Web Audio API, no samples) — a
+  baked combustion-pulse loop (144 uneven, ringing cylinder pulses) played
+  back at `rpm / 2400` with a bright top-end scream layer, dual exhaust
+  body resonances, throttle-driven drive + lowpass, sub octave and
+  combustion roar — plus a full **starter-motor sequence (whirr → catch →
+  idle flare)** on launch, **exhaust crackles and afterfire pops** on
+  lift-off and downshifts, intake + plenum hiss, dual-band tire screech,
+  wind rush, cabin rumble, curb rumble and **impact thuds on wall hits**.
+  The game runs silently if audio is unavailable
 - **Racing HUD** — canvas tachometer with shift lights and big gear readout,
   lap counter with checkpoint pips, current lap / total / best times,
   transmission & camera badges, reset/restart/sound/settings buttons, lap
@@ -92,6 +97,30 @@ in code, and the production build bundles all dependencies into static files.
 - **Robust error handling** — WebGL capability check, visible error overlay
   for initialization failures, console logging; a blank screen is never
   shown
+
+## Install it on your device (PWA)
+
+Apex Circuit is a **Progressive Web App**. On the first visit a service
+worker downloads the entire game — app shell, Three.js bundle and all three
+GLB models — onto the device (watch the progress bar on the loading screen).
+After that the game launches from the home screen / app drawer like a native
+app and **plays fully offline**. Chrome / Edge on desktop and Android show an
+**INSTALL GAME ON DEVICE** button on the start screen; on iOS use
+*Share → Add to Home Screen*.
+
+## Model & asset credits
+
+The game ships with three community models (optimized with
+[gltf-transform](https://gltf-transform.dev/), vertex-quantized):
+
+| Asset | Author | License |
+| ----- | ------ | ------- |
+| Porsche 911 Carrera 4S | [Karol Miklas](https://sketchfab.com/karolmiklas) | CC-BY-SA-4.0 |
+| Car interior (Jaguar XJ220) | [Gerhald](https://sketchfab.com/Gerhald) | CC-BY-4.0 |
+| Tree GN | [TechArtBGN](https://sketchfab.com/TechArtBGN) | CC-BY-4.0 |
+
+All other meshes, textures and every sound are generated procedurally in
+code. Engine audio is a real-time synthesis, not a recording.
 
 ## Quick start
 

@@ -1,53 +1,30 @@
 /**
- * Car — Audi-inspired GT racing car, fully procedural (no external assets).
+ * Car — Porsche 911 Carrera 4S (Karol Miklas, CC-BY-SA-4.0), rigged for the
+ * game. The exterior comes from `public/models/porsche_911.glb`; the merged
+ * axle meshes are split into four independent wheels so every corner can
+ * spin, steer and travel on its suspension like the real car.
  *
- * The model is authored with the nose along +X inside `model` (wrapped -90°
- * about Y so the nose points at +Z world). `body` carries the hull + interior
- * and receives suspension roll/pitch/bounce; the four wheel assemblies hang
- * off `model` directly so they track the road while the body leans.
+ * Model space: nose +X (wrapped -90° about Y so the nose points at +Z world).
+ * `body` carries everything and receives suspension roll/pitch/bounce.
  *
- * Exterior: sculpted hull, Audi singleframe grille + four-rings badges,
- * front/rear bumpers with intake & diffuser, hood bulge, side skirts, doors,
- * mirrors, big racing wing with endplates, quad exhaust tips, LED lights,
- * and proper wheel arches: body-coloured flares + dark wheel-well liners so
- * the tires never visually intersect the painted bodywork.
- * Interior (Interior.js): Audi RS/R8-style cockpit — high-poly flat-bottom
- * steering wheel with four-rings hub + paddles, live Virtual Cockpit display,
- * MMI touchscreen minimap, RS bucket seats, aluminum pedals, ambient light.
- * Wheels: tire / 5-spoke rim / brake disc (spins) / caliper (steers, not spin).
+ * The glTF scene is authored nose +Z, so it is mounted inside `body` with a
+ * +90° Y wrap. Wheel rigs are built in the glTF scene's own frame (axle = X,
+ * up = Y, nose = +Z): spin about X, steer about Y, suspension along Y.
+ *
+ * Extras rigged on top of the model: physically-based headlight spotlights +
+ * additive lens halos, brake-reactive rear light bar, clearcoat paint presets
+ * (see PAINTS) and upgraded glass/chrome/rubber materials.
  */
 
 import * as THREE from 'three';
-import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
-import { CAR, SUSPENSION, HEADLIGHTS } from './Constants.js';
-import { buildInterior, drawCluster, drawMMI } from './Interior.js';
-
-function extrudeShape(points, depth, bevel) {
-  const shape = new THREE.Shape();
-  shape.moveTo(points[0][0], points[0][1]);
-  for (let i = 1; i < points.length; i++) shape.lineTo(points[i][0], points[i][1]);
-  shape.closePath();
-  const geo = new THREE.ExtrudeGeometry(shape, {
-    depth,
-    bevelEnabled: true,
-    bevelThickness: bevel,
-    bevelSize: bevel,
-    bevelSegments: 2,
-    curveSegments: 4
-  });
-  geo.translate(0, 0, -depth / 2);
-  return geo;
-}
-
-function box(w, h, d, x, y, z) {
-  const g = new THREE.BoxGeometry(w, h, d);
-  g.translate(x, y, z);
-  return g;
-}
+import { CAR, SUSPENSION, HEADLIGHTS, PAINTS } from './Constants.js';
+import { loadGLB, toFloat32Geometry, keepTriangles, stripExtras } from './ModelKit.js';
+import { buildInterior } from './Interior.js';
 
 export class Car {
   constructor(track = null) {
     this.track = track;
+    this.ready = false;         // flips true once the GLBs are rigged
 
     this.group = new THREE.Group();      // world transform (position + heading)
     this.model = new THREE.Group();      // static wrap: nose +X -> +Z
@@ -57,21 +34,13 @@ export class Car {
     this.body = new THREE.Group();       // suspension roll/pitch/bounce
     this.model.add(this.body);
 
-    this._buildMaterials();
-    this._buildExterior();
-    this._buildArches();
-    this._buildWheels();
-    this._buildHeadlights();
-
-    // Audi RS/R8 cockpit: dash, screens, high-poly steering wheel, seats,
-    // pedals, driver — sets cockpitAnchor / steering refs / helmet too.
-    buildInterior(this);
-
+    this.wheels = [];
     this._prevVF = 0;
     this._spinAngle = 0;
     this._steerVis = 0;
     this._time = 0;
     this._clusterAcc = 1;
+    this._mmiAcc = 1;
     this._indicatorT = 0;
 
     // spring-damper body bounce state
@@ -81,43 +50,48 @@ export class Car {
     this.cockpitMode = false;
   }
 
+  /**
+   * Load + rig everything. Call once; resolves after the car, interior and
+   * cockpit systems are attached and `ready` is true.
+   */
+  async build(onProgress) {
+    // progress: car is the big one (~75% of the wait), interior the rest
+    const carScene = await loadGLB('./models/porsche_911.glb',
+      (t) => onProgress && onProgress(t * 0.8));
+
+    this._buildBaseMaterials();
+    this._prepareExterior(carScene);
+    this._rigWheels(carScene);
+    this._buildLights();
+
+    // interior (own GLB) — attaches cockpit, screens, animated steering wheel
+    try {
+      await buildInterior(this, onProgress);
+    } catch (err) {
+      console.warn('[ApexCircuit] Interior model failed, continuing without it:', err);
+      this._buildFallbackCockpit();
+    }
+
+    this.ready = true;
+    if (onProgress) onProgress(1);
+  }
+
   // ------------------------------------------------------------------ mats
-  _buildMaterials() {
+  _buildBaseMaterials() {
     this.mats = {
-      // clearcoat paint — deep Audi red with a lacquer layer that catches
-      // the floodlights and moonlight
-      paint: new THREE.MeshPhysicalMaterial({
-        color: 0xb0121a, metalness: 0.62, roughness: 0.34, flatShading: true,
-        clearcoat: 1.0, clearcoatRoughness: 0.14, envMapIntensity: 1.15
-      }),
-      paintDark: new THREE.MeshStandardMaterial({
-        color: 0x5c0d0d, metalness: 0.7, roughness: 0.42, flatShading: true
-      }),
       blackMatte: new THREE.MeshStandardMaterial({
         color: 0x14161a, metalness: 0.12, roughness: 0.88
       }),
       blackGloss: new THREE.MeshStandardMaterial({
         color: 0x0c0e11, metalness: 0.4, roughness: 0.35
       }),
-      glass: new THREE.MeshStandardMaterial({
-        color: 0x0d141b, metalness: 0.9, roughness: 0.08,
-        transparent: true, opacity: 0.5, envMapIntensity: 1.6,
+      glassDark: new THREE.MeshStandardMaterial({
+        color: 0x0d1420, metalness: 0.08, roughness: 0.10,
+        transparent: true, opacity: 0.10, envMapIntensity: 1.2,
         depthWrite: false
       }),
       chrome: new THREE.MeshStandardMaterial({
-        color: 0xd8dde2, metalness: 1.0, roughness: 0.22, envMapIntensity: 1.3
-      }),
-      rim: new THREE.MeshStandardMaterial({
-        color: 0xb7bec7, metalness: 0.9, roughness: 0.32, envMapIntensity: 1.1
-      }),
-      tire: new THREE.MeshStandardMaterial({
-        color: 0x121212, roughness: 0.97, metalness: 0
-      }),
-      disc: new THREE.MeshStandardMaterial({
-        color: 0x8f979e, metalness: 1.0, roughness: 0.42
-      }),
-      caliper: new THREE.MeshStandardMaterial({
-        color: 0xd23a1e, metalness: 0.3, roughness: 0.5
+        color: 0xd8dde2, metalness: 1.0, roughness: 0.2, envMapIntensity: 1.35
       }),
       interior: new THREE.MeshStandardMaterial({
         color: 0x191c21, metalness: 0.05, roughness: 0.94
@@ -128,226 +102,165 @@ export class Car {
       accent: new THREE.MeshStandardMaterial({
         color: 0xd23a1e, metalness: 0.4, roughness: 0.5
       }),
-      headlight: new THREE.MeshStandardMaterial({
-        color: 0xaeb49e, emissive: 0xf2f8ff, emissiveIntensity: 3.6,
-        metalness: 0.2, roughness: 0.3
+      alu: new THREE.MeshStandardMaterial({
+        color: 0xc7ccd3, metalness: 0.95, roughness: 0.34, envMapIntensity: 1.2
       }),
-      tail: new THREE.MeshStandardMaterial({
-        color: 0x400704, emissive: 0xff2016, emissiveIntensity: 1.6,
-        roughness: 0.4
+      needle: new THREE.MeshBasicMaterial({
+        color: 0xff3b30, toneMapped: false
       }),
-      reverse: new THREE.MeshStandardMaterial({
-        color: 0x3a3a3a, emissive: 0xffffff, emissiveIntensity: 0.12
-      }),
-      indicator: new THREE.MeshStandardMaterial({
-        color: 0x6b4408, emissive: 0xffa114, emissiveIntensity: 0.15,
-        roughness: 0.4
-      }),
-      helmet: new THREE.MeshStandardMaterial({
-        color: 0xf2f4f6, roughness: 0.28, metalness: 0.08
-      }),
-      helmetVisor: new THREE.MeshStandardMaterial({
-        color: 0x101418, metalness: 0.8, roughness: 0.15
-      }),
+      screenGlow: new THREE.MeshBasicMaterial({ color: 0x0a0e14, toneMapped: false }),
       well: new THREE.MeshStandardMaterial({
-        color: 0x0b0c0e, roughness: 0.95, metalness: 0.05,
+        color: 0x060708, roughness: 0.97, metalness: 0.05,
         side: THREE.DoubleSide
       })
     };
+
+    // body paint — deep clearcoat lacquer (color set by setPaint)
+    this.mats.paint = new THREE.MeshPhysicalMaterial({
+      color: 0xc00d1e, metalness: 0.72, roughness: 0.30,
+      clearcoat: 1.0, clearcoatRoughness: 0.08, envMapIntensity: 1.35
+    });
+    this.setPaint('guardsRed');
   }
 
-  // -------------------------------------------------------------- exterior
-  _buildExterior() {
-    const M = this.mats;
-    const paint = [], trim = [], gloss = [], glass = [];
-
-    // main hull — side profile (x: nose -> tail, y: up)
-    paint.push(extrudeShape([
-      [2.18, 0.16], [2.26, 0.34], [2.24, 0.56], [2.02, 0.64],
-      [1.06, 0.74], [0.26, 1.15], [-0.58, 1.21], [-1.32, 1.03],
-      [-1.97, 0.94], [-2.2, 0.8], [-2.24, 0.44], [-2.16, 0.17],
-      [-1.0, 0.13], [1.0, 0.13]
-    ], 1.48, 0.05));
-
-    // hood power bulge
-    paint.push(box(0.9, 0.05, 0.62, 1.45, 0.775, 0));
-
-    // doors: seam lines + handles (thin dark strips slightly proud)
-    trim.push(box(0.02, 0.42, 0.015, 0.52, 0.56, 0.755));
-    trim.push(box(0.02, 0.42, 0.015, 0.52, 0.56, -0.755));
-    trim.push(box(0.02, 0.4, 0.015, -0.62, 0.55, 0.755));
-    trim.push(box(0.02, 0.4, 0.015, -0.62, 0.55, -0.755));
-    trim.push(box(0.16, 0.035, 0.03, 0.28, 0.7, 0.765));
-    trim.push(box(0.16, 0.035, 0.03, 0.28, 0.7, -0.765));
-
-    // side skirts
-    trim.push(box(2.3, 0.12, 0.14, 0.0, 0.17, 0.83));
-    trim.push(box(2.3, 0.12, 0.14, 0.0, 0.17, -0.83));
-
-    // front bumper: intake + slats + splitter
-    trim.push(box(0.3, 0.34, 1.72, 2.2, 0.34, 0));
-    for (const z of [-0.5, 0, 0.5]) trim.push(box(0.24, 0.2, 0.05, 2.32, 0.3, z));
-    trim.push(box(0.42, 0.05, 1.86, 2.24, 0.13, 0));
-    // rear bumper + diffuser shell
-    trim.push(box(0.26, 0.4, 1.76, -2.24, 0.36, 0));
-    trim.push(box(0.3, 0.16, 1.66, -2.26, 0.2, 0));
-    for (let i = -3; i <= 3; i++) {
-      trim.push(box(0.3, 0.16, 0.03, -2.24, 0.18, i * 0.22));
-    }
-
-    // racing wing: blade, endplates, stanchions
-    trim.push(box(0.4, 0.045, 1.86, -2.06, 1.13, 0));
-    trim.push(box(0.06, 0.24, 0.3, -2.06, 1.06, 0.93));
-    trim.push(box(0.06, 0.24, 0.3, -2.06, 1.06, -0.93));
-    trim.push(box(0.16, 0.26, 0.05, -1.98, 0.98, 0.5));
-    trim.push(box(0.16, 0.26, 0.05, -1.98, 0.98, -0.5));
-
-    // ducktail lip
-    trim.push(box(0.18, 0.05, 1.5, -2.06, 0.98, 0));
-
-    // glass canopy: windshield band + side windows + rear window
-    glass.push(extrudeShape([
-      [1.0, 0.755], [0.24, 1.17], [-0.56, 1.225], [-1.3, 1.045],
-      [-1.34, 0.83], [-0.5, 0.75]
-    ], 1.56, 0.03));
-    // opaque dark side-glass panels just outside the hull wall — from the
-    // cabin they read as tinted windows instead of showing the red hull side
-    gloss.push(box(1.9, 0.30, 0.03, -0.45, 0.99, 0.752));
-    gloss.push(box(1.9, 0.30, 0.03, -0.45, 0.99, -0.752));
-    // cowl side panels (inside the hull, visible only from the cabin —
-    // block the red fender tops past the dash edges)
-    gloss.push(box(0.95, 0.22, 0.03, 1.02, 0.91, 0.72));
-    gloss.push(box(0.95, 0.22, 0.03, 1.02, 0.91, -0.72));
-
-    // mirrors
-    for (const side of [1, -1]) {
-      trim.push(box(0.05, 0.03, 0.14, 0.78, 0.86, side * 0.82));
-      paint.push(box(0.10, 0.07, 0.13, 0.76, 0.9, side * 0.95));
-      trim.push(box(0.02, 0.07, 0.12, 0.695, 0.9, side * 0.95));
-    }
-
-    // exhausts: quad tips
-    for (const z of [-0.34, -0.22, 0.22, 0.34]) {
-      const pipe = new THREE.CylinderGeometry(0.045, 0.05, 0.16, 8).rotateX(Math.PI / 2);
-      pipe.translate(-2.32, 0.28, z);
-      gloss.push(pipe);
-      const inner = new THREE.CylinderGeometry(0.032, 0.032, 0.17, 8).rotateX(Math.PI / 2);
-      inner.translate(-2.325, 0.28, z);
-      trim.push(inner);
-    }
-
-    // lights
-    for (const side of [-1, 1]) {
-      trim.push(box(0.1, 0.13, 0.34, 2.18, 0.56, side * 0.6));
-      gloss.push(box(0.04, 0.1, 0.28, 2.235, 0.56, side * 0.6));
-      gloss.push(box(0.03, 0.06, 0.1, 2.24, 0.4, side * 0.8));
-      gloss.push(box(0.03, 0.06, 0.1, -2.3, 0.52, side * 0.84));
-    }
-    // full-width tail bar + reverse light
-    gloss.push(box(0.04, 0.09, 1.6, -2.345, 0.68, 0));
-    gloss.push(box(0.03, 0.06, 0.14, -2.34, 0.4, 0));
-
-    // --- Audi singleframe grille + four rings badges -------------------------
-    gloss.push(box(0.03, 0.05, 0.74, 2.30, 0.665, 0));      // top bar
-    gloss.push(box(0.03, 0.05, 0.74, 2.30, 0.415, 0));      // bottom bar
-    gloss.push(box(0.03, 0.30, 0.05, 2.30, 0.54, 0.355));   // right post
-    gloss.push(box(0.03, 0.30, 0.05, 2.30, 0.54, -0.355));  // left post
-    trim.push(box(0.02, 0.22, 0.68, 2.285, 0.54, 0));       // grille insert
-
-    const ringsF = [], ringsR = [];
-    for (let i = 0; i < 4; i++) {
-      const rf = new THREE.TorusGeometry(0.034, 0.005, 8, 24);
-      rf.rotateY(Math.PI / 2);
-      rf.translate(2.30, 0.745, (i - 1.5) * 0.052);
-      ringsF.push(rf);
-      const rr = new THREE.TorusGeometry(0.026, 0.0045, 8, 24);
-      rr.rotateY(Math.PI / 2);
-      rr.translate(-2.30, 0.585, (i - 1.5) * 0.040);
-      ringsR.push(rr);
-    }
-    this.body.add(new THREE.Mesh(mergeGeometries(ringsF.map((g) => g.toNonIndexed()), false), M.chrome));
-    this.body.add(new THREE.Mesh(mergeGeometries(ringsR.map((g) => g.toNonIndexed()), false), M.chrome));
-
-    this._addMeshes(paint, M.paint, true, true);
-    this._addMeshes(trim, M.blackMatte, true, false);
-    this._addMeshes(gloss, M.blackGloss, true, false);
-    this._addMeshes(glass, M.glass, false, false);
+  /** Select a factory paint preset (key of PAINTS). */
+  setPaint(key) {
+    const p = PAINTS[key] || PAINTS.guardsRed;
+    this.paintKey = key in PAINTS ? key : 'guardsRed';
+    this.mats.paint.color.setHex(p.color);
+    // flake sparkle: metalness/roughness shift per paint family
+    const dark = (p.color >> 16 & 255) + (p.color >> 8 & 255) + (p.color & 255) < 180;
+    this.mats.paint.metalness = dark ? 0.55 : 0.78;
+    this.mats.paint.roughness = dark ? 0.34 : 0.27;
   }
 
+  // ------------------------------------------------------------- exterior
   /**
-   * Wheel arches: body-coloured flares wrapped over each wheel + dark
-   * wheel-well liners. The liner hides the hull side wall behind the tire so
-   * the tire can never look like it is overlapping/bleeding into the body.
+   * Mount the glTF scene on the body, remove studio props, upgrade the
+   * model's materials to game-quality PBR.
    */
-  _buildArches() {
-    const M = this.mats;
-    const R = CAR.wheelRadius;
-    const archOuter = R + 0.20;   // capped so the flare stays below the window sill
-    const archInner = R + 0.065;
-    const flare = [], liners = [];
+  _prepareExterior(scene) {
+    stripExtras(scene);
 
-    for (const [cx, cz] of [[1.48, 0.82], [1.48, -0.82], [-1.48, 0.82], [-1.48, -0.82]]) {
-      // flare: annulus sector over the top of the wheel, extruded across it.
-      // The extrude starts AT the hull side wall (z = ±0.74) and goes outward
-      // so no flare surface pokes into the cabin (visible through windows).
-      const shape = new THREE.Shape();
-      const a0 = THREE.MathUtils.degToRad(8);
-      const a1 = Math.PI - a0;
-      shape.absarc(0, 0, archOuter, a0, a1, false);
-      shape.absarc(0, 0, archInner, a1, a0, true);
-      shape.closePath();
-      const g = new THREE.ExtrudeGeometry(shape, {
-        depth: 0.34, bevelEnabled: true,
-        bevelThickness: 0.025, bevelSize: 0.02, bevelSegments: 2,
-        curveSegments: 26
-      });
-      // translate to the wheel: X = front/rear position (cx!), Y over the
-      // wheel centre, Z starts at the hull side wall and extrudes outward.
-      // (Missing cx here used to pile all four flares at x=0 — a stray arch
-      // across the doors — leaving the real wheels bare: the "overlapping
-      // tire" bug.)
-      g.translate(cx, R, cz > 0 ? 0.74 : -1.08);
-      flare.push(g);
+    // remove studio props: paint buckets, backdrop cube + hemi gizmo shells
+    const PROP_EXACT = new Set(['Plane', 'Plane002', 'Plane003', 'Plane004', 'Cube001']);
+    const PROP_PREFIX = ['Hemi', 'Cube001', 'Plane002', 'Plane003', 'Plane004'];
+    const doomed = [];
+    scene.traverse((o) => {
+      const n = o.name;
+      if (PROP_EXACT.has(n) || PROP_PREFIX.some((p) => n.startsWith(p))) doomed.push(o);
+    });
+    for (const o of doomed) o.parent && o.parent.remove(o);
 
-      // dark well liner: open half-cylinder over the top of the tire
-      const lg = new THREE.CylinderGeometry(
-        R + 0.055, R + 0.055, 0.34, 16, 1, true, Math.PI / 2, Math.PI
-      );
-      lg.rotateX(Math.PI / 2);
-      lg.translate(cx, R, cz + Math.sign(cz) * 0.07);
-      liners.push(lg);
-    }
+    // material upgrades by the author's material names
+    let tailBar = null;
+    scene.traverse((o) => {
+      if (!o.isMesh) return;
+      o.castShadow = true;
+      o.receiveShadow = false;
+      const m = o.material;
+      if (!m) return;
+      const name = m.name || '';
+      if (name === 'paint') {
+        o.material = this.mats.paint;
+      } else if (name === 'coat') {
+        // the author's clearcoat shell — keep it subtle
+        if (!this.mats.coat) {
+          this.mats.coat = new THREE.MeshPhysicalMaterial({
+            color: 0x0b0d10, metalness: 0.9, roughness: 0.05,
+            transparent: true, opacity: 0.16, envMapIntensity: 2.2,
+            depthWrite: false
+          });
+        }
+        o.material = this.mats.coat;
+        o.castShadow = false;
+      } else if (name === 'window') {
+        o.material = this.mats.glassDark;
+        o.castShadow = false;
+      } else if (name === 'glass') {
+        o.material = this.mats.glassDark;
+        o.castShadow = false;
+      } else if (name === 'lights') {
+        if (!this.mats.headlightLens) {
+          this.mats.headlightLens = new THREE.MeshStandardMaterial({
+            color: 0xd8e4f0, emissive: 0xcfe4ff, emissiveIntensity: 2.6,
+            metalness: 0.2, roughness: 0.18, envMapIntensity: 1.4
+          });
+        }
+        o.material = this.mats.headlightLens;
+      } else if (name === 'rubber') {
+        if (!this.mats.tire) {
+          this.mats.tire = new THREE.MeshStandardMaterial({
+            color: 0x151515, roughness: 0.96, metalness: 0.0
+          });
+          this.mats.tire.name = 'rubber';
+        }
+        o.material = this.mats.tire;
+      } else if (name === 'silver') {
+        o.material = this.mats.chrome;
+      } else if (name === 'plastic') {
+        o.material = this.mats.blackMatte;
+      } else if (name === 'full_black') {
+        o.material = this.mats.blackGloss;
+      } else if (name === 'Material.001') {
+        // brake calipers — racing orange, faint glow under the moonlight
+        if (!this.mats.caliper) {
+          this.mats.caliper = new THREE.MeshStandardMaterial({
+            color: 0xd8480f, metalness: 0.35, roughness: 0.42,
+            emissive: 0x551602, emissiveIntensity: 0.7
+          });
+          this.mats.caliper.name = 'Material.001';
+        }
+        o.material = this.mats.caliper;
+      } else if (name === 'tex_shiny' && o.name.startsWith('boot003')) {
+        // rear light bar — brake reactive
+        if (!this.mats.tailBar) {
+          this.mats.tailBar = new THREE.MeshStandardMaterial({
+            color: 0x30040a, emissive: 0xff1a1a, emissiveIntensity: 1.5,
+            roughness: 0.3, metalness: 0.2
+          });
+        }
+        o.material = this.mats.tailBar;
+        tailBar = this.mats.tailBar;
+      }
+    });
 
-    this._addMeshes(flare, M.paint, true, false);
-    const linerMesh = new THREE.Mesh(mergeGeometries(liners.map((g) => g.toNonIndexed()), false), M.well);
-    this.body.add(linerMesh);
+    // wheel-well liners are added by _rigWheels once the wheel centers are known
+
+    // mount: glTF nose +Z -> model space nose +X
+    scene.rotation.y = Math.PI / 2;
+    // raise so the tires rest on y = 0 (measured from the wheel pivots)
+    const lift = 0.565;
+    scene.position.y = lift;
+    this.carRoot = scene;
+    this.body.add(scene);
+
+    this.tailBarMat = tailBar;
   }
+
+  /** Dark liner half-cylinders behind each wheel (visual polish). — built in _rigWheels */
 
   // ---------------------------------------------------------- headlights
-  /**
-   * Real headlight rig: two spotlights aimed down the road (no shadows —
-   * cheap) plus emissive lenses. This is what makes the night track readable
-   * and dangerous: the world ahead only exists as far as the beams reach.
-   */
-  _buildHeadlights() {
+  _buildLights() {
+    // real spotlights down the road (no shadows — cheap)
     const mk = (z) => {
       const light = new THREE.SpotLight(
         HEADLIGHTS.color, HEADLIGHTS.intensity,
         HEADLIGHTS.distance, HEADLIGHTS.angle, HEADLIGHTS.penumbra, HEADLIGHTS.decay
       );
-      light.position.set(2.05, 0.62, z);
+      light.position.set(1.95, 0.52, z);
       light.castShadow = false;
       const target = new THREE.Object3D();
-      target.position.set(34, -1.4, z * 1.35);
+      target.position.set(34, -1.5, z * 1.4);
       this.body.add(light);
       this.body.add(target);
       light.target = target;
       return light;
     };
-    this.headlightL = mk(0.62);
-    this.headlightR = mk(-0.62);
+    this.headlightL = mk(0.55);
+    this.headlightR = mk(-0.55);
 
-    // lens halos (fake bloom — additive sprites, cheap on every GPU)
+    // lens halos (fake bloom)
     if (!this.mats.glowTex) {
       const cv = document.createElement('canvas');
       cv.width = cv.height = 128;
@@ -362,112 +275,160 @@ export class Car {
       this.mats.glowTex.colorSpace = THREE.SRGBColorSpace;
     }
     const headGlow = new THREE.SpriteMaterial({
-      map: this.mats.glowTex, color: 0xeaf4ff, transparent: true, opacity: 0.8,
+      map: this.mats.glowTex, color: 0xeaf4ff, transparent: true, opacity: 0.75,
       blending: THREE.AdditiveBlending, depthWrite: false, toneMapped: false
     });
-    for (const z of [0.6, -0.6]) {
+    for (const z of [0.55, -0.55]) {
       const sp = new THREE.Sprite(headGlow);
-      sp.position.set(2.28, 0.56, z);
-      sp.scale.set(0.55, 0.35, 1);
+      sp.position.set(2.05, 0.5, z);
+      sp.scale.set(0.5, 0.3, 1);
       this.body.add(sp);
     }
     // tail bar halo — brightness driven by braking in updateVisual
     this.tailGlowMat = new THREE.SpriteMaterial({
-      map: this.mats.glowTex, color: 0xff2418, transparent: true, opacity: 0.35,
+      map: this.mats.glowTex, color: 0xff2418, transparent: true, opacity: 0.3,
       blending: THREE.AdditiveBlending, depthWrite: false, toneMapped: false
     });
     const tailSp = new THREE.Sprite(this.tailGlowMat);
-    tailSp.position.set(-2.4, 0.68, 0);
-    tailSp.scale.set(1.7, 0.55, 1);
+    tailSp.position.set(-2.12, 0.62, 0);
+    tailSp.scale.set(1.55, 0.4, 1);
     this.body.add(tailSp);
   }
 
-  _addMeshes(geos, mat, castShadow, receive) {
-    if (!geos.length) return null;
-    // ExtrudeGeometry is non-indexed while primitives are indexed —
-    // normalize everything so mergeGeometries never refuses the batch
-    const normalized = geos.map((g) => (g.index ? g.toNonIndexed() : g));
-    const merged = mergeGeometries(normalized, false);
-    const mesh = new THREE.Mesh(merged, mat);
-    mesh.castShadow = castShadow;
-    mesh.receiveShadow = false;
-    this.body.add(mesh);
-    return mesh;
+  // -------------------------------------------------------------- wheels
+  /**
+   * The model merges each axle's four wheels into two meshes (tire/rim/disc
+   * per material + caliper), both halves sharing one mesh per material.
+   * This splits every part down the x = 0 plane and builds proper per-wheel
+   * rigs: steer -> susp -> spin pivots at the true wheel centers.
+   */
+  _rigWheels(scene) {
+    const axles = { rear: null, front: null };
+    scene.traverse((o) => {
+      if (o.isMesh) return;
+      if (o.name.startsWith('Cylinder000')) axles.rear = o;
+      else if (o.name.startsWith('Cylinder001')) axles.front = o;
+    });
+
+    const inv = new THREE.Matrix4();
+    scene.updateMatrixWorld(true);
+    inv.copy(scene.matrixWorld).invert();
+
+    this.wheelRadius = CAR.wheelRadius;
+
+    for (const [key, axle] of Object.entries(axles)) {
+      if (!axle) continue;
+      const meshes = [];
+      axle.updateMatrixWorld(true);
+      axle.traverse((o) => { if (o.isMesh) meshes.push(o); });
+
+      // axle center from the tire mesh's world origin
+      let tireMesh = null;
+      for (const o of meshes) {
+        if (o.material && o.material.name === 'rubber') tireMesh = o;
+      }
+      const centerLocal = new THREE.Vector3()
+        .setFromMatrixPosition(tireMesh.matrixWorld)
+        .applyMatrix4(inv);
+
+      // tire radius (visual) from the full tire bbox
+      {
+        const g = toFloat32Geometry(tireMesh.geometry);
+        g.applyMatrix4(new THREE.Matrix4().multiplyMatrices(inv, tireMesh.matrixWorld));
+        g.computeBoundingBox();
+        const size = g.boundingBox.getSize(new THREE.Vector3());
+        this.wheelRadius = Math.max(0.2, (size.y + size.z) / 4);
+        g.dispose();
+      }
+
+      for (const side of [1, -1]) {
+        const wheelRoot = new THREE.Group();
+        const steer = new THREE.Group();
+        const susp = new THREE.Group();
+        const spin = new THREE.Group();
+        wheelRoot.add(steer); steer.add(susp); susp.add(spin);
+
+        // split every part down the x = 0 plane (bake scene-space transforms)
+        const halves = [];
+        for (const mesh of meshes) {
+          const g = toFloat32Geometry(mesh.geometry);
+          g.applyMatrix4(new THREE.Matrix4().multiplyMatrices(inv, mesh.matrixWorld));
+          const pos = g.attributes.position;
+          const keep = new Array(pos.count);
+          for (let i = 0; i < pos.count; i++) keep[i] = (pos.getX(i) * side) > -0.001;
+          const g2 = keepTriangles(g, keep);
+          if (g2) halves.push({ geometry: g2, material: mesh.material, isCaliper: mesh.material.name === 'Material.001' });
+          g.dispose();
+        }
+
+        // wheel center x = centroid of this side's tire half
+        let xHalf = centerLocal.x;
+        const rub = halves.find((h) => h.material.name === 'rubber');
+        if (rub) {
+          rub.geometry.computeBoundingBox();
+          xHalf = (rub.geometry.boundingBox.min.x + rub.geometry.boundingBox.max.x) / 2;
+        }
+        wheelRoot.position.set(xHalf, centerLocal.y, centerLocal.z);
+
+        for (const h of halves) {
+          const mm = new THREE.Mesh(h.geometry, h.material);
+          mm.castShadow = true;
+          mm.position.set(-xHalf, -centerLocal.y, -centerLocal.z);
+          if (h.isCaliper) steer.add(mm);   // caliper steers, never spins
+          else spin.add(mm);
+        }
+
+        scene.add(wheelRoot);
+        this.wheels.push({
+          steerGroup: steer, suspGroup: susp, spinGroup: spin,
+          spinAxis: 'x',                     // glTF frame: axle along X
+          front: key === 'front',
+          side
+        });
+      }
+
+      axle.visible = false;
+    }
+
+    // order wheels FL, FR, RL, RR to match phys.suspSmooth indices
+    this.wheels.sort((a, b) => (b.front - a.front) || (a.side - b.side));
+
+    // well liners behind each wheel
+    const liners = [];
+    for (const w of this.wheels) {
+      const c = w.steerGroup.parent.position; // wheelRoot position (scene space)
+      const R = this.wheelRadius;
+      const lg = new THREE.CylinderGeometry(R + 0.05, R + 0.05, 0.30, 14, 1, true, Math.PI / 2, Math.PI);
+      lg.rotateX(Math.PI / 2);              // axle along X in scene space
+      lg.translate(c.x, c.y + 0.02, c.z);
+      liners.push(toFloat32Geometry(lg));
+    }
+    if (liners.length) {
+      const merged = mergeGeometriesFloat(liners);
+      const linerMesh = new THREE.Mesh(merged, this.mats.well);
+      this.carRoot.add(linerMesh);
+    }
   }
 
-  // -------------------------------------------------------------- wheels
-  _buildWheels() {
-    const M = this.mats;
-    const R = CAR.wheelRadius;
-
-    // tire: cylinder + shoulder tori
-    // (wheel axle is model Z: cylinder rotated Y->Z; tori keep their default
-    //  Z axis so they lie flat in the wheel plane)
-    const tireGeo = new THREE.CylinderGeometry(R, R, 0.27, 24);
-    tireGeo.rotateX(Math.PI / 2);
-    const shoulderGeo = new THREE.TorusGeometry(R - 0.012, 0.024, 8, 24);
-
-    // rim: outer ring + hub + 5 spokes (merged) — all in the XY wheel plane
-    const rimParts = [];
-    rimParts.push(new THREE.TorusGeometry(0.195, 0.03, 8, 24));
-    const hub = new THREE.CylinderGeometry(0.062, 0.062, 0.24, 12);
-    hub.rotateX(Math.PI / 2);
-    rimParts.push(hub);
-    for (let i = 0; i < 5; i++) {
-      const a = (i / 5) * Math.PI * 2;
-      const spoke = new THREE.BoxGeometry(0.03, 0.3, 0.05);
-      spoke.rotateZ(a);
-      rimParts.push(spoke);
-    }
-    const rimGeo = mergeGeometries(rimParts, false);
-
-    const discGeo = new THREE.CylinderGeometry(0.15, 0.15, 0.028, 18);
-    discGeo.rotateX(Math.PI / 2);
-    const caliperGeo = box(0.1, 0.16, 0.05, 0, 0.02, 0);
-
-    this.wheels = [];
-    const positions = [
-      { x: 1.48, z: 0.82, front: true },
-      { x: 1.48, z: -0.82, front: true },
-      { x: -1.48, z: 0.82, front: false },
-      { x: -1.48, z: -0.82, front: false }
-    ];
-    for (const pos of positions) {
-      const steerGroup = new THREE.Group();
-      steerGroup.position.set(pos.x, R, pos.z);
-
-      const suspGroup = new THREE.Group();
-      steerGroup.add(suspGroup);
-
-      const spinGroup = new THREE.Group();
-      suspGroup.add(spinGroup);
-
-      const tire = new THREE.Mesh(tireGeo, M.tire);
-      tire.castShadow = true;
-      spinGroup.add(tire);
-      const shoulder = new THREE.Mesh(shoulderGeo, M.tire);
-      shoulder.position.z = 0.135;
-      spinGroup.add(shoulder);
-      const shoulder2 = new THREE.Mesh(shoulderGeo, M.tire);
-      shoulder2.position.z = -0.135;
-      spinGroup.add(shoulder2);
-
-      const rimMesh = new THREE.Mesh(rimGeo, M.rim);
-      rimMesh.castShadow = true;
-      spinGroup.add(rimMesh);
-
-      const disc = new THREE.Mesh(discGeo, M.disc);
-      disc.position.z = pos.z > 0 ? 0.09 : -0.09;
-      spinGroup.add(disc);
-
-      // caliper does not spin — hangs off the upright (steer group)
-      const caliper = new THREE.Mesh(caliperGeo, M.caliper);
-      caliper.position.z = (pos.z > 0 ? 0.09 : -0.09);
-      steerGroup.add(caliper);
-
-      this.model.add(steerGroup);
-      this.wheels.push({ steerGroup, suspGroup, spinGroup, front: pos.front, side: Math.sign(pos.z) });
-    }
+  /** Minimal cockpit so the game stays playable if the interior GLB fails. */
+  _buildFallbackCockpit() {
+    const box = new THREE.Mesh(
+      new THREE.BoxGeometry(0.5, 0.3, 1.3),
+      this.mats.blackGloss
+    );
+    box.position.set(0.75, 0.75, 0);
+    this.body.add(box);
+    this.cockpitAnchor = new THREE.Object3D();
+    this.cockpitAnchor.position.set(-0.05, 1.02, -0.33);
+    this.body.add(this.cockpitAnchor);
+    this.steeringSpin = new THREE.Group();
+    this.body.add(this.steeringSpin);
+    this.shifterGroup = new THREE.Group();
+    this.body.add(this.shifterGroup);
+    this.pedalThrottle = new THREE.Group();
+    this.pedalBrake = new THREE.Group();
+    this.handbrakeLever = new THREE.Group();
+    this.helmet = new THREE.Group();
   }
 
   // ------------------------------------------------------------ per-frame
@@ -479,15 +440,16 @@ export class Car {
    * @param {RaceSystem} [race] — optional, feeds the Virtual Cockpit lap info
    */
   updateVisual(dt, phys, trans, race = null) {
+    if (!this.ready) return;
     this._time += dt;
 
     this.group.position.set(phys.position.x, phys.position.y + 0.02, phys.position.z);
     this.group.rotation.y = phys.heading;
 
-    // ---- wheels: spin (physically vF/R), steer, suspension travel ----------
-    const R = CAR.wheelRadius;
+    // ---- wheels: spin (vF / true radius), steer, suspension travel --------
+    const R = this.wheelRadius || CAR.wheelRadius;
     let spinRate = phys.vF / R;
-    if (phys.wheelspin && trans.gear > 0) spinRate += 26;   // flare
+    if (phys.wheelspin && trans.gear > 0) spinRate += 26;
     if (trans.wheelspin && trans.gear < 0) spinRate -= 14;
     this._spinAngle -= spinRate * dt;
 
@@ -495,9 +457,10 @@ export class Car {
     this._steerVis = THREE.MathUtils.damp(this._steerVis, steerTarget, 12, dt);
 
     const susp = phys.suspSmooth;
-    for (let i = 0; i < 4; i++) {
+    for (let i = 0; i < this.wheels.length; i++) {
       const w = this.wheels[i];
-      w.spinGroup.rotation.z = this._spinAngle;
+      if (w.spinAxis === 'x') w.spinGroup.rotation.x = this._spinAngle;
+      else w.spinGroup.rotation.z = this._spinAngle;
       if (w.front) w.steerGroup.rotation.y = this._steerVis;
       const travel = (susp[i] - 0.5) * 2 * SUSPENSION.travel;
       w.suspGroup.position.y = travel;
@@ -521,7 +484,7 @@ export class Car {
     // spring-damper body bounce (curbs / bumps settle naturally)
     const avgComp = (susp[0] + susp[1] + susp[2] + susp[3]) / 4;
     const targetY = -(avgComp - 0.5) * SUSPENSION.travel * 1.6;
-    const k = 90, c = 13;                                   // ~1.5 Hz, slightly underdamped
+    const k = 90, c = 13;
     const accel = (targetY - this._bodyY) * k - this._bodyYV * c;
     this._bodyYV += accel * dt;
     this._bodyY += this._bodyYV * dt;
@@ -531,27 +494,23 @@ export class Car {
     }
     this.body.position.y = THREE.MathUtils.clamp(bounceY, -0.1, 0.1);
 
-    // ---- steering wheel + shifter + pedals ---------------------------------
+    // ---- steering wheel + shifter + pedals (interior rig) ------------------
     const steerVisNorm = this._steerVis / 0.5;
-    this.steeringSpin.rotation.x = -steerVisNorm * 2.4;      // ~137° lock-to-lock feel
-    this.shifterGroup.rotation.z = -trans.shifterX * 0.3;
-    this.shifterGroup.rotation.x = trans.shifterZ * 0.24;
-    this.pedalThrottle.rotation.z = -0.35 + phys.throttleOut * 0.25;
-    this.pedalBrake.rotation.z = -0.35 + phys.brakeOut * 0.3;
-    this.handbrakeLever.rotation.z = phys.brakeOut > 0 && phys.vF < 1 ? 0.5 : 0.9;
+    if (this.steeringSpin) this.steeringSpin.rotation.z = -steerVisNorm * 2.4;
+    if (this.shifterGroup) {
+      this.shifterGroup.rotation.z = -trans.shifterX * 0.3;
+      this.shifterGroup.rotation.x = trans.shifterZ * 0.24;
+    }
+    if (this.pedalThrottle) this.pedalThrottle.rotation.z = -0.35 + phys.throttleOut * 0.25;
+    if (this.pedalBrake) this.pedalBrake.rotation.z = -0.35 + phys.brakeOut * 0.3;
+    if (this.handbrakeLever) {
+      this.handbrakeLever.rotation.z = phys.brakeOut > 0 && phys.vF < 1 ? 0.5 : 0.9;
+    }
 
     // ---- lights -------------------------------------------------------------
     const braking = phys.brakeOut > 0.15 && phys.vF > 0.4;
-    this.mats.tail.emissiveIntensity = braking ? 4.4 : 1.7;
-    this.mats.reverse.emissiveIntensity = phys.reversing ? 2.8 : 0.12;
-    if (this.tailGlowMat) this.tailGlowMat.opacity = braking ? 0.8 : 0.32;
-
-    // turn indicators: blink toward steering input
-    this._indicatorT += dt;
-    const blinkOn = Math.sin(this._indicatorT * 7) > 0;
-    const steerNorm = phys.steerAngle / 0.5;
-    const blink = (steerNorm < -0.3 || steerNorm > 0.3) && blinkOn;
-    this.mats.indicator.emissiveIntensity = blink ? 3.2 : 0.15;
+    if (this.mats.tailBar) this.mats.tailBar.emissiveIntensity = braking ? 4.6 : 1.6;
+    if (this.tailGlowMat) this.tailGlowMat.opacity = braking ? 0.75 : 0.26;
 
     // ---- ambient light line: slow breathing pulse ----------------------------
     if (this.mats.ambient) {
@@ -559,19 +518,44 @@ export class Car {
     }
 
     // ---- cockpit visibility -------------------------------------------------
-    this.helmet.visible = !this.cockpitMode;
+    if (this.helmet) this.helmet.visible = !this.cockpitMode && this.helmet.children.length > 0;
+    // in cockpit view the donor cabin shell is switched off — the rigged
+    // wheel, cluster and MMI are separate and stay; this keeps the sight line
+    // to the road clean
+    if (this.cabinGroup) this.cabinGroup.visible = !this.cockpitMode;
 
     // ---- live Virtual Cockpit (~20 Hz) ----------------------------------------
     this._clusterAcc += dt;
     if (this._clusterAcc > 0.05) {
       this._clusterAcc = 0;
-      drawCluster(this, trans.rpmNorm, phys.speedKmh, trans.gearLabel, trans.limiterCut, race);
+      if (this.drawCluster) {
+        this.drawCluster(this, trans.rpmNorm, phys.speedKmh, trans.gearLabel, trans.limiterCut, race);
+      }
     }
     // ---- MMI minimap (~4 Hz) ---------------------------------------------------
     this._mmiAcc += dt;
     if (this._mmiAcc > 0.25) {
       this._mmiAcc = 0;
-      drawMMI(this, ((phys.s % 1) + 1) % 1);
+      if (this.drawMMI) this.drawMMI(this, ((phys.s % 1) + 1) % 1);
     }
   }
+}
+
+/** Merge plain float32 geometries (positions/normals/uvs must all exist or all not). */
+function mergeGeometriesFloat(geos) {
+  const out = new THREE.BufferGeometry();
+  const names = Object.keys(geos[0].attributes);
+  for (const name of names) {
+    const item = geos[0].attributes[name].itemSize;
+    let total = 0;
+    for (const g of geos) total += g.attributes[name].array.length;
+    const arr = new Float32Array(total);
+    let o = 0;
+    for (const g of geos) {
+      arr.set(g.attributes[name].array, o);
+      o += g.attributes[name].array.length;
+    }
+    out.setAttribute(name, new THREE.BufferAttribute(arr, item));
+  }
+  return out;
 }
