@@ -7,9 +7,35 @@ import { DEFAULT_SETTINGS } from './Constants.js';
 
 const KEY = 'apex-circuit:settings';
 
+/**
+ * Pick a sensible default graphics quality based on the device.
+ * iPads and phones get 'low' (3x screens + WebGL is brutal on fill-rate);
+ * desktops / laptops get 'medium'. The user can still bump it up in Settings.
+ */
+function detectDefaultQuality() {
+  try {
+    const ua = navigator.userAgent;
+    const isIOS = /ipad|iphone|ipod/i.test(ua) ||
+      (navigator.platform === 'MacIntel' && (navigator.maxTouchPoints || 0) > 0);
+    const isAndroid = /android/i.test(ua);
+    const isMobileGPU = isIOS || isAndroid;
+    if (isMobileGPU) return 'low';
+    // cheap desktop heuristic: hardware concurrency < 8 or small screen -> medium
+    const cores = navigator.hardwareConcurrency || 4;
+    const mem = navigator.deviceMemory || 4;
+    if (cores < 8 || mem < 8) return 'medium';
+    return 'medium';
+  } catch {
+    return 'medium';
+  }
+}
+
 export class Settings {
   constructor() {
-    this.data = { ...DEFAULT_SETTINGS };
+    // detect device-appropriate default quality BEFORE we overlay saved prefs
+    // so first-time visitors on iPad don't get stuck on the old 'medium' preset
+    // (which was cratering the framerate).
+    this.data = { ...DEFAULT_SETTINGS, quality: detectDefaultQuality() };
     this._load();
   }
 
@@ -48,3 +74,4 @@ export class Settings {
     } catch { /* storage unavailable — session-only settings */ }
   }
 }
+

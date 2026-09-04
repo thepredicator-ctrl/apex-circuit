@@ -22,16 +22,19 @@ import { loadGLB, stripExtras, toFloat32Geometry, keepTriangles } from './ModelK
 const CABIN = {
   rotationY: -Math.PI / 2,   // interior is authored nose -X -> rotate to nose +X
   mirrorX: true,             // source is right-hand-drive -> flip to LHD
-  targetWidth: 1.46,         // fitted cabin width in meters
+  targetWidth: 1.42,         // fitted cabin width (m) — matches 911 beltline
   scale: 1.0,                // extra trim factor (source is already metric)
   posX: 0.42,                // dash toward the nose
   posY: -0.55,               // drop so the sill hides under the beltline
   posZ: 0.0
 };
 
-// where the steering wheel must end up (model space, meters). The whole cabin
-// is shifted so the wheel's baked center hits exactly this point.
-const WHEEL_TARGET = new THREE.Vector3(-0.24, 0.36, -0.37);
+// Where the steering wheel must end up in BODY SPACE (meters).
+// 911 driver position: wheel center ~1.05 m above ground (beltline ~0.95,
+// seat hip ~0.42, wheel diameter 0.38 → hub at 0.42+0.63). The previous
+// value 0.36 placed the wheel roughly at floor level after the cabin
+// offset (-0.55) was applied.
+const WHEEL_TARGET = new THREE.Vector3(-0.24, 1.05, -0.37);
 
 /** Give the steering wheel rim its own leather material. */
 function weelLeather(scene, mat) {
@@ -132,19 +135,26 @@ export async function buildInterior(car, onProgress) {
 
   // ---- snap the cabin to a known-good anchor ---------------------------------
   // Whatever the upstream transforms did, the steering wheel must sit at
-  // WHEEL_TARGET (model space: LHD, slightly forward of the hips, left side).
+  // WHEEL_TARGET in BODY SPACE (not cabin-local). The cabin group was added
+  // to car.body at CABIN.posX/posY/posZ; the previous code added an *extra*
+  // (WHEEL_TARGET.y - wc.y) offset which left the wheel ~0.5 m too low.
+  // We now compute the body-space position of the wheel center under the
+  // current cabin transform, then move the cabin by the difference so the
+  // wheel ends up exactly at WHEEL_TARGET.
   let weel = null;
   scene.traverse((o) => { if (!weel && o.isMesh && o.name.toLowerCase().includes('weel')) weel = o; });
   if (!weel) throw new Error('steering wheel node not found');
   {
     weel.geometry.computeBoundingBox();
     const wb = weel.geometry.boundingBox;
-    const wc = new THREE.Vector3(
+    const wcLocal = new THREE.Vector3(
       (wb.min.x + wb.max.x) / 2, (wb.min.y + wb.max.y) / 2, (wb.min.z + wb.max.z) / 2
     );
-    cabin.position.x += WHEEL_TARGET.x - wc.x;
-    cabin.position.y += WHEEL_TARGET.y - wc.y;
-    cabin.position.z += WHEEL_TARGET.z - wc.z;
+    // body-space position of the wheel center under the current cabin transform
+    car.body.updateMatrixWorld(true);
+    const wheelBody = wcLocal.clone().applyMatrix4(cabin.matrixWorld);
+    // shift the cabin so the wheel lands at WHEEL_TARGET in body space
+    cabin.position.add(WHEEL_TARGET.clone().sub(wheelBody));
   }
 
   rigSteeringWheel(car, weel, cabin.position);

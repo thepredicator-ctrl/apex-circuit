@@ -39,39 +39,46 @@ export const HEADLIGHTS = {
 
 export const CAR = {
   mass: 1180,               // kg
-  wheelbase: 2.96,          // m (track 1.6 wide)
-  cgHeight: 0.52,           // m — drives longitudinal load transfer
-  weightDistFront: 0.52,    // static load fraction on the front axle
-  wheelRadius: 0.34,        // m — also used for wheel spin / rpm math
+  wheelbase: 2.96,          // m (Porsche 911 Carrera 4S)
+  trackWidth: 1.50,         // m — front/rear track (≈ same on the 911)
+  cgHeight: 0.42,           // m — lower than arcade for flatter cornering
+  weightDistFront: 0.42,    // 911 rear-engine: ~42/58 F/R static load
+  wheelRadius: 0.34,        // m
 
-  maxSpeed: 66,             // m/s (~238 km/h) achieved at redline in 6th
+  maxSpeed: 66,             // m/s (~238 km/h) — top of 6th
   maxReverseSpeed: 11,
-  brakeDecel: 30,           // m/s^2 at full load
+  brakeDecel: 30,           // m/s^2 (kept for legacy HUD reads)
+  brakeTorque: 2600,        // N·m total brake torque at full pedal
   rollingResistance: 0.35,  // * g — radial tires
   airDrag: 0.00042,         // * v^2 (Cd*A/rho folded in)
-  downforce: 1.9,           // * v^2 -> added vertical load (N)
+  airDragLat: 0.00020,      // * vLat^2 — side wind/drift drag
+  downforce: 1.9,           // * v^2 -> N (split 45/55 F/R)
 
-  // lateral grip (per-axle mu * load handles the rest)
-  gripAsphalt: 1.35,        // tire friction coefficient (dry asphalt, arcade-ish)
-  gripGrass: 0.55,
-  handbrakeRearGrip: 0.34,  // rear mu multiplier with handbrake
-  powerOversteerFactor: 0.80, // rear mu multiplier at high throttle + steer
-  highSteerGripFactor: 0.88,  // front mu loss at full lock + speed
-  lateralDamp: 1.6,         // extra slide settle
-  yawDamping: 7.5,          // yaw-rate response smoothing
+  // tire grip — Pacejka D multiplier (peak friction coefficient)
+  gripAsphalt: 1.40,        // ~dry performance tires
+  gripCurb:    1.00,        // curbs are painted concrete — less grip
+  gripGrass:   0.45,
+  handbrakeRearGrip: 0.34,  // legacy (unused in Pacejka path but kept for HUD)
+  powerOversteerFactor: 0.80,
+  highSteerGripFactor: 0.88,
+  lateralDamp: 1.6,
+  yawDamping: 7.5,
 
-  // yaw rate limits (speed dependent steering)
-  maxYawLowSpeed: 2.6,      // rad/s cap when slow
-  yawGripMultiplier: 1.05,  // how close commanded yaw may hug the grip circle
-  minSteerSpeed: 1.4,       // m/s below which steering fades out
+  // steering
+  maxSteerAngle: 0.55,      // rad — ~31° max front wheel lock
+  minSteerSpeed: 1.4,       // m/s below which steering fades out (kept for HUD)
+
+  // vehicle inertia
+  yawInertia: 1850,         // kg·m² — 911 is mid-low polar inertia
+  wheelInertia: 1.6,        // kg·m² per wheel (tire + rim)
 
   grassDrag: 6.5,
 
   // collision
-  wallOffset: 3.4,          // wall distance beyond road half width
+  wallOffset: 3.4,
   carHalfWidth: 0.95,
-  wallBounce: 0.25,         // how much lateral velocity survives a hit
-  wallSpeedScrub: 0.86      // forward speed kept when scraping the wall
+  wallBounce: 0.25,
+  wallSpeedScrub: 0.86
 };
 
 /**
@@ -155,25 +162,25 @@ export const QUALITY = {
     shadows: false,
     shadowMapSize: 512,
     fogFar: 620,
-    particles: 0.45,
+    particles: 0.35,
     aniso: 2
   },
   medium: {
     label: 'MEDIUM',
-    pixelRatio: 1.6,
+    pixelRatio: 1.25,
     shadows: true,
     shadowMapSize: 1024,
-    fogFar: 900,
-    particles: 0.8,
+    fogFar: 850,
+    particles: 0.6,
     aniso: 4
   },
   high: {
     label: 'HIGH',
-    pixelRatio: 1.9,
+    pixelRatio: 1.6,
     shadows: true,
-    shadowMapSize: 2048,
-    fogFar: 1200,
-    particles: 1.2,
+    shadowMapSize: 1536,
+    fogFar: 1100,
+    particles: 1.0,
     aniso: 8
   }
 };
