@@ -34,6 +34,15 @@ export class Car {
     this.body = new THREE.Group();       // suspension roll/pitch/bounce
     this.model.add(this.body);
 
+    // ---- defensive cockpit anchor -----------------------------------------
+    // A default eye position so the camera rig never reads `undefined` before
+    // the Interior GLB finishes loading (or if it fails entirely on iPad
+    // Safari). buildInterior() / _buildFallbackCockpit() will overwrite this
+    // with the proper anchor once assets are rigged.
+    this.cockpitAnchor = new THREE.Object3D();
+    this.cockpitAnchor.position.set(-0.05, 1.02, -0.33);
+    this.body.add(this.cockpitAnchor);
+
     this.wheels = [];
     this._prevVF = 0;
     this._spinAngle = 0;

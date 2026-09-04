@@ -39,6 +39,7 @@ export class Game {
     this.particleFactor = 1;
     this._startLightTimer = null;
     this.onProgress = null;   // set by main.js: (frac, label) => ...
+    this._cameraReapplied = false;
   }
 
   // ------------------------------------------------------------------ setup
@@ -47,16 +48,33 @@ export class Game {
       (window.matchMedia && window.matchMedia('(pointer: coarse)').matches) ||
       (navigator.maxTouchPoints || 0) > 0;
     this.isMobile = isMobile;
+    // iPad detection — modern iPadOS reports as MacIntel, so we have to also
+    // check for touch support. Used by the renderer + audio + PWA prompts.
+    this.isIPad = (
+      /ipad/i.test(navigator.userAgent) ||
+      (navigator.platform === 'MacIntel' && (navigator.maxTouchPoints || 0) > 0)
+    );
+    this.isIPhone = /iphone/i.test(navigator.userAgent);
+    this.isIOS = this.isIPad || this.isIPhone;
 
     // ---- settings ---------------------------------------------------------
     this.settings = new Settings();
 
     // ---- renderer --------------------------------------------------------
+    // iOS Safari (iPadOS 16+) can refuse WebGL contexts that demand a real
+    // GPU, so we DO NOT set failIfMajorPerformanceCaveat. We also keep
+    // antialias off on phones (huge fill-rate cost) and on when the device
+    // looks like an iPad or desktop.
+    const isPhone = this.isMobile && !this.isIPad;
     this.renderer = new THREE.WebGLRenderer({
-      antialias: true,
-      powerPreference: 'high-performance'
+      antialias: !isPhone,
+      powerPreference: 'high-performance',
+      failIfMajorPerformanceCaveat: false,
+      stencil: false,
+      depth: true
     });
-    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, isMobile ? 1.8 : 2));
+    // iPad screens are dense (3x); cap at 2 for perf, 1.5 on phones.
+    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, isPhone ? 1.5 : 2));
     this.renderer.setSize(window.innerWidth, window.innerHeight);
     this.renderer.shadowMap.enabled = true;
     this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
@@ -140,6 +158,18 @@ export class Game {
     this._loadAssets();
   }
 
+  /** Re-apply the persisted camera mode once the car's cockpit anchor is ready. */
+  _reapplyCameraWhenReady() {
+    if (this._cameraReapplied) return;
+    if (!this.car || !this.car.ready || !this.car.cockpitAnchor) return;
+    this._cameraReapplied = true;
+    // the persisted setting may be 'cockpit' — safe to apply now that the
+    // anchor exists. This must run AFTER buildInterior() resolved.
+    this.cameraRig.setMode(this.settings.camera, this.car, this.phys);
+    this.car.cockpitMode = this.settings.camera === 'cockpit';
+    this.hud.setCockpitMode(this.settings.camera === 'cockpit');
+  }
+
   /** Load the GLB assets (car/interior/tree) and dress the world. */
   async _loadAssets() {
     const progress = (frac, label) => {
@@ -160,6 +190,9 @@ export class Game {
       if (this.onError) this.onError(err instanceof Error ? err : new Error(String(err)));
       return;
     }
+    // Interior anchor is now rigged (either from the GLB or the fallback) —
+    // safe to switch into the persisted cockpit mode if the user had one.
+    this._reapplyCameraWhenReady();
     this.state = 'idle';
   }
 
@@ -221,14 +254,24 @@ export class Game {
   _applyAllSettings() {
     const s = this.settings;
     this.transmission.setMode(s.transmission);
-    this.cameraRig.setMode(s.camera, this.car, this.phys);
+    // Don't snap into cockpit mode before the car's interior is rigged — on
+    // iPad Safari this was the path that read `car.cockpitAnchor` before the
+    // GLB finished streaming and threw the runtime crash. The CameraRig is
+    // now guarded, but we also defer applying the persisted camera mode
+    // until _loadAssets() finishes, then _reapplyCameraWhenReady() runs.
+    if (this.car && this.car.cockpitAnchor) {
+      this.cameraRig.setMode(s.camera, this.car, this.phys);
+    } else {
+      // safe placeholder: chase mode; the persisted mode is reapplied later
+      this.cameraRig.setMode('chase', this.car, this.phys);
+    }
     this.cameraRig.setSmoothing(s.cameraSmoothing);
     this.input.sensitivity = s.steerSensitivity;
     this.audio.setVolumes(s.masterVolume, s.engineVolume);
     this._applyQuality(s.quality);
     this.hud.syncSettings(s.data);
     this.hud.setModes(s.transmission, s.camera);
-    this.car.cockpitMode = s.camera === 'cockpit';
+    this.car.cockpitMode = s.camera === 'cockpit' && this.car.cockpitAnchor;
     this.hud.setCockpitMode(s.camera === 'cockpit');
     if (this.car.ready) this.car.setPaint(s.paint);
   }

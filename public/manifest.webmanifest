@@ -6,10 +6,13 @@
   "start_url": "./",
   "scope": "./",
   "display": "standalone",
+  "display_override": ["standalone", "fullscreen", "minimal-ui"],
   "orientation": "landscape",
+  "orientation_override": ["landscape", "landscape-primary", "landscape-secondary"],
   "background_color": "#0b0f14",
   "theme_color": "#0b0f14",
   "categories": ["games", "entertainment"],
+  "screenshots": [],
   "icons": [
     {
       "src": "./favicon.svg",
