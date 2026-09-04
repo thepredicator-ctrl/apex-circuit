@@ -58,16 +58,26 @@ export class CameraRig {
     this.setMode(this.mode === 'chase' ? 'cockpit' : 'chase', car, phys);
   }
 
-  /** Jump instantly to the correct pose (race start / reset / mode switch). */
+  /**
+   * Jump instantly to the correct pose (race start / reset / mode switch).
+   *
+   * Defensive: if the cockpit anchor isn't ready yet (GLB still streaming,
+   * Interior failed to load and the fallback hasn't run, or the user toggled
+   * to cockpit mode during the loading screen on iPad Safari), we gracefully
+   * fall back to the chase pose instead of throwing — see GitHub issue
+   * "t.cockpitAnchor.getWorldPosition is not a function" crash on iPad.
+   */
   snap(car, phys) {
     this._first = true;
-    if (this.mode === 'cockpit') {
+    const canCockpit = this.mode === 'cockpit' && car && car.cockpitAnchor;
+    if (canCockpit) {
       car.cockpitAnchor.getWorldPosition(this.curPos);
       const fwd = _fwd.set(Math.sin(phys.heading), 0, Math.cos(phys.heading));
       this.curLook.copy(this.curPos).addScaledVector(fwd, CAMERA.cockpitLookAhead);
     } else {
-      this._chaseDesired(phys, _tmp, _tmp);
-      // recompute properly (desired + look)
+      // cockpit requested but the anchor isn't built yet — use the chase pose
+      // as a safe placeholder; the next update() will switch over once the
+      // Interior GLB finishes rigging.
       this._snapChase(phys);
     }
     this.apply(phys, null);
@@ -118,10 +128,16 @@ export class CameraRig {
 
   update(dt, phys, inputState, car) {
     this._t += dt;
-    if (this.mode === 'cockpit') {
+    // Resolve the *effective* mode for this frame: if the user has cockpit
+    // selected but the car's interior anchor isn't rigged yet (still loading,
+    // or the GLB failed on iPad Safari), temporarily render with the chase
+    // rig so the screen never crashes or goes blank.
+    const wantCockpit = this.mode === 'cockpit';
+    const canCockpit = wantCockpit && car && car.cockpitAnchor;
+    if (canCockpit) {
       this._updateCockpit(dt, phys, car);
     } else {
-      this._updateChase(dt, phys, inputState);
+      this._updateChase(dt, phys, inputState || { steer: 0 });
     }
     this.apply(phys, car);
   }
@@ -153,6 +169,14 @@ export class CameraRig {
   }
 
   _updateCockpit(dt, phys, car) {
+    // bail to chase if the cockpit anchor isn't rigged yet (asset load still
+    // pending or the Interior GLB failed on iPad Safari) — this is the path
+    // that previously threw "undefined is not an object (evaluating
+    // 't.cockpitAnchor.getWorldPosition')" on the live GitHub Pages site.
+    if (!car || !car.cockpitAnchor) {
+      this._updateChase(dt, phys, { steer: 0 });
+      return;
+    }
     // eye position rides the body (suspension, bank, bumps)
     car.cockpitAnchor.getWorldPosition(_world);
     // counter-inertia: head dips opposite to accel, leans opposite to cornering

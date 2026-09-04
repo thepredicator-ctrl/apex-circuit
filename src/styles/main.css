@@ -119,8 +119,13 @@ html, body {
   border-radius: 999px;
   cursor: pointer;
   transition: background 0.15s, transform 0.15s;
+  /* keep clear of iPhone notches and iPad camera bumps in landscape */
+  margin-left: max(0px, env(safe-area-inset-left));
+  margin-right: max(0px, env(safe-area-inset-right));
+  touch-action: manipulation;
 }
 .install-btn:hover { background: rgba(40, 80, 50, 0.7); transform: translateY(-1px); }
+.install-btn:disabled { opacity: 0.65; cursor: default; transform: none; }
 .start-controls {
   margin-top: 26px;
   display: flex;

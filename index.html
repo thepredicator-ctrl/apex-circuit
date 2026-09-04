@@ -8,8 +8,17 @@
   <meta name="mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="Apex Circuit" />
+  <meta name="format-detection" content="telephone=no" />
+  <meta name="apple-touch-fullscreen" content="yes" />
+  <meta name="touch-fullscreen" content="yes" />
+  <meta name="x5-fullscreen" content="true" />
+  <meta name="updegree-fullscreen" content="true" />
   <link rel="manifest" href="./manifest.webmanifest" />
-  <link rel="apple-touch-icon" href="./favicon.svg" />
+  <!-- iOS home-screen icon (PNG, not SVG — iOS ignores SVG apple-touch-icons) -->
+  <link rel="apple-touch-icon" href="./icons/icon-192.png" />
+  <link rel="apple-touch-icon" sizes="167x167" href="./icons/icon-192.png" />
+  <link rel="apple-touch-icon" sizes="180x180" href="./icons/icon-512.png" />
   <link rel="icon" type="image/svg+xml" href="./favicon.svg" />
   <title>Apex Circuit — 3D Arcade Racer</title>
   <style>
@@ -51,6 +60,7 @@
       <p class="start-sub">3 laps &middot; 3 checkpoints per lap &middot; beat your best time</p>
       <button id="start-button" class="start-btn" type="button">TAP / PRESS ANY KEY TO START</button>
       <button id="install-button" class="install-btn" type="button" style="display:none;">⤓ INSTALL GAME ON DEVICE</button>
+      <button id="download-button" class="install-btn" type="button" style="display:none;">PRE-DOWNLOAD GAME TO DEVICE</button>
       <div class="start-controls">
         <div><b>Drive</b> W A S D or Arrow keys &nbsp;&middot;&nbsp; <b>Handbrake</b> Space</div>
         <div><b>Gears (manual)</b> Q / E &nbsp;&middot;&nbsp; <b>Camera</b> V &nbsp;&middot;&nbsp; <b>Transmission</b> M &nbsp;&middot;&nbsp; <b>Reset</b> R &nbsp;&middot;&nbsp; <b>Settings</b> Esc</div>
