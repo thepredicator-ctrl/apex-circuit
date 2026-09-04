@@ -491,22 +491,45 @@ export class Car {
     this.group.rotation.y = phys.heading;
 
     // ---- wheels: spin (vF / true radius), steer, suspension travel --------
+    // Smooth, physically-correct wheel behavior:
+    //   - spin rate = vF / wheelRadius (the true rolling speed)
+    //   - under wheelspin, the driven (rear) wheels spin faster than vF/r
+    //   - steering is damped for smooth visual response (no snapping)
+    //   - suspension travel follows the physics compression targets
     const R = this.wheelRadius || CAR.wheelRadius;
-    let spinRate = phys.vF / R;
-    if (phys.wheelspin && trans.gear > 0) spinRate += 26;
-    if (trans.wheelspin && trans.gear < 0) spinRate -= 14;
-    this._spinAngle -= spinRate * dt;
+    // Base rolling spin rate for all four wheels
+    let baseSpinRate = phys.vF / R;
+    // Driven wheels (rear on this RWD 911) get extra spin under wheelspin
+    // so the rear tires visually spin up while the fronts roll true.
+    const rearSpinBoost = (phys.wheelspin && trans.gear > 0) ? 22 : 0;
+    const rearSpinCut  = (trans.wheelspin && trans.gear < 0) ? -12 : 0;
+    this._spinAngle -= baseSpinRate * dt;
 
+    // Steering: damped for smooth visual response. Higher damping constant
+    // = faster response. 14 gives quick but smooth steering.
     const steerTarget = -phys.steerAngle;
-    this._steerVis = THREE.MathUtils.damp(this._steerVis, steerTarget, 12, dt);
+    this._steerVis = THREE.MathUtils.damp(this._steerVis, steerTarget, 14, dt);
 
     const susp = phys.suspSmooth;
     for (let i = 0; i < this.wheels.length; i++) {
       const w = this.wheels[i];
-      if (w.spinAxis === 'x') w.spinGroup.rotation.x = this._spinAngle;
-      else w.spinGroup.rotation.z = this._spinAngle;
+      // Per-wheel spin: rear wheels get the wheelspin boost, fronts just roll
+      let wheelSpin = this._spinAngle;
+      if (!w.front) {
+        // rear (driven) wheels — add wheelspin visual
+        wheelSpin -= (rearSpinBoost + rearSpinCut) * dt;
+      }
+      if (w.spinAxis === 'x') w.spinGroup.rotation.x = wheelSpin;
+      else w.spinGroup.rotation.z = wheelSpin;
+      // Front wheels steer; rears don't
       if (w.front) w.steerGroup.rotation.y = this._steerVis;
-      const travel = (susp[i] - 0.5) * 2 * SUSPENSION.travel;
+      // Suspension travel: clamp to a safe range so wheels never detach
+      // from the body or clip through the road.
+      const travel = THREE.MathUtils.clamp(
+        (susp[i] - 0.5) * 2 * SUSPENSION.travel,
+        -SUSPENSION.travel * 0.9,
+        SUSPENSION.travel * 0.9
+      );
       w.suspGroup.position.y = travel;
     }
 

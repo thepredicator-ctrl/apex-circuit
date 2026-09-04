@@ -489,9 +489,12 @@ export class Game {
     const spinning = phys.wheelspin && speed < 30;
     const hit = phys.justHitWall;
 
-    // wall impact: crash audio scaled by the closing speed
+    // wall impact: crash audio scaled by the closing speed + camera shake
     if (hit) {
-      this.audio.crashThud(Math.min(1, (phys.hitImpact || 6) / 12));
+      const impactStrength = Math.min(1, (phys.hitImpact || 6) / 12);
+      this.audio.crashThud(impactStrength);
+      // trigger a camera impact shake proportional to the closing speed
+      this.cameraRig.impact(impactStrength * 1.2);
     }
 
     if (!(drifting || offroad || spinning || hit)) {

@@ -40,29 +40,29 @@ export const HEADLIGHTS = {
 export const CAR = {
   mass: 1180,               // kg
   wheelbase: 2.96,          // m (Porsche 911 Carrera 4S)
-  cgHeight: 0.46,           // m — raised slightly for more palpable weight transfer
+  cgHeight: 0.42,           // m — lower CG = less sliding, more planted
   weightDistFront: 0.42,    // 911 is rear-engine ~42/58 F/R static load
   wheelRadius: 0.34,        // m
 
   maxSpeed: 66,             // m/s (~238 km/h)
   maxReverseSpeed: 11,
-  brakeDecel: 26,           // m/s^2 at full load (slightly below peak mu*g so trail-braking has feel)
+  brakeDecel: 28,           // m/s^2 at full load — strong but progressive
   rollingResistance: 0.35,
   airDrag: 0.00042,
-  downforce: 1.4,           // * v^2 -> N (lowered so high-speed grip doesn't go infinite)
+  downforce: 1.6,           // * v^2 -> N — keeps the car planted at speed
 
-  // lateral grip — tuned for SIM feel: less peak grip, more progressive breakaway
-  gripAsphalt: 1.10,        // was 1.35 — real sport tires peak ~1.1-1.2 mu, was arcade-sticky
+  // lateral grip — tuned to feel planted at normal speeds, slide at the limit
+  gripAsphalt: 1.25,        // was 1.10 (too slidey); 1.25 = planted but breakable
   gripGrass: 0.45,
-  handbrakeRearGrip: 0.30,
-  powerOversteerFactor: 0.74, // more aggressive power oversteer
-  highSteerGripFactor: 0.82,  // more front washout at high steer + speed
-  lateralDamp: 2.0,         // slides settle a bit slower (more drifty)
-  yawDamping: 6.0,          // yaw response less damped (more rotational feel)
+  handbrakeRearGrip: 0.28,  // was 0.30 — handbrake breaks loose more decisively
+  powerOversteerFactor: 0.78, // was 0.74 — slightly less aggressive (more controllable)
+  highSteerGripFactor: 0.86,  // was 0.82 — slightly more front grip at full lock
+  lateralDamp: 1.4,         // was 2.0 — slides settle FASTER (less drifty, more planted)
+  yawDamping: 7.0,          // was 6.0 — slightly more damped (less twitchy)
 
-  // yaw rate limits — LOWERED for sim feel (the car can't rotate as fast)
-  maxYawLowSpeed: 2.0,      // was 2.6 — real cars rotate ~1.5-2 rad/s at full lock low speed
-  yawGripMultiplier: 0.92,  // was 1.05 — yaw stays just inside the grip circle (more understeer at the limit)
+  // yaw rate limits
+  maxYawLowSpeed: 1.85,     // was 2.0 — slightly less rotation for stability
+  yawGripMultiplier: 0.96,  // was 0.92 — closer to grip circle (more responsive but safe)
   minSteerSpeed: 1.4,
 
   grassDrag: 6.5,
@@ -70,8 +70,8 @@ export const CAR = {
   // collision
   wallOffset: 3.4,
   carHalfWidth: 0.95,
-  wallBounce: 0.25,
-  wallSpeedScrub: 0.86
+  wallBounce: 0.20,         // was 0.25 — less bouncy (more planted after hits)
+  wallSpeedScrub: 0.82      // was 0.86 — slightly more speed loss on wall scrape
 };
 
 /**
@@ -101,15 +101,15 @@ export const TRANSMISSION = {
 };
 
 export const SUSPENSION = {
-  travel: 0.085,           // m of visual wheel travel
+  travel: 0.11,              // m of visual wheel travel (was 0.085 — more visible)
   // per-wheel compression inputs (fractions of travel), targets are damped
-  rate: 9,                 // spring responsiveness (damp constant)
-  bumpCurbAmp: 0.55,       // curb rumble amplitude (fraction of travel)
+  rate: 9,                   // spring responsiveness (damp constant)
+  bumpCurbAmp: 0.55,         // curb rumble amplitude (fraction of travel)
   bumpCurbFreq: 46,
-  accelPitch: 0.02,        // rad at ~1g braking/accel
-  rollG: 0.032,            // rad per g lateral
-  maxRoll: 0.06,
-  maxPitch: 0.05
+  accelPitch: 0.035,         // was 0.02 — more visible pitch on accel/brake
+  rollG: 0.05,               // was 0.032 — more visible body roll in corners
+  maxRoll: 0.085,            // was 0.06 — allow more roll for sim feel
+  maxPitch: 0.07             // was 0.05 — allow more pitch
 };
 
 export const TRACK = {
@@ -121,29 +121,29 @@ export const TRACK = {
 
 export const CAMERA = {
   // --- chase ---------------------------------------------------------------
-  fovBase: 62,
-  fovSpeedBoost: 17,        // wide-angle rush at top speed (62 -> ~79)
-  distanceBase: 7.2,
-  distanceSpeed: 2.7,       // pulls IN slightly less than before (tighter = faster feel)
-  heightBase: 2.95,
-  heightSpeed: 0.45,        // camera stays lower at speed
-  posDamping: 5.0,
-  lookDamping: 9.5,
-  lookAhead: 8.5,
-  rollMax: 0.05,
-  chaseShake: 0.05,         // m of high-speed camera vibration
+  fovBase: 60,
+  fovSpeedBoost: 14,        // wider FOV at top speed (60 -> ~74) for speed feel
+  distanceBase: 6.8,        // consistent comfortable distance
+  distanceSpeed: 0.6,       // VERY small pull-back at speed (was 2.7 — too much)
+  heightBase: 2.6,
+  heightSpeed: 0.15,        // camera barely rises at speed
+  posDamping: 7.0,          // tighter follow (was 5.0 — less lag)
+  lookDamping: 11.0,        // tighter look (was 9.5)
+  lookAhead: 7.0,
+  rollMax: 0.04,
+  chaseShake: 0.035,        // m of high-speed camera vibration
   // velocity prediction: how far ahead of the *velocity vector* the rig aims
-  velocityLead: 0.28,
-  accelLift: 0.55,          // camera rises back under acceleration (m)
-  brakeDive: 0.45,          // drops closer under braking (m)
+  velocityLead: 0.18,       // less lead = camera doesn't swing wildly
+  accelLift: 0.0,           // NO backward motion on accel (was 0.55 — the bug)
+  brakeDive: 0.18,          // small dive closer under braking (was 0.45)
   // --- hood ----------------------------------------------------------------
   // Replaces the old cockpit mode. Sits on the hood, no interior needed.
   hoodFov: 68,
-  hoodFovBoost: 6,          // hood FOV widens slightly with speed
+  hoodFovBoost: 8,          // hood FOV widens slightly with speed
   hoodLookAhead: 25,        // m forward to look
-  hoodDamping: 12,          // tight follow — feels like you're in the car
-  hoodLookDamping: 14,
-  hoodShake: 0.018          // cabin vibration amplitude
+  hoodDamping: 14,          // tight follow — feels like you're in the car
+  hoodLookDamping: 16,
+  hoodShake: 0.022          // cabin vibration amplitude
 };
 
 /** Graphics quality presets. */

@@ -257,15 +257,24 @@ export class VehiclePhysics {
     if (this.trans.gear === -1 && vF < -CAR.maxReverseSpeed) vF = -CAR.maxReverseSpeed;
 
     // --- steering / yaw ------------------------------------------------------------
-    // commanded yaw is limited by the car's grip circle (kinematic: a = v·ω)
+    // Speed-sensitive steering: at low speed you get full lock for tight
+    // parking-lot turns; at high speed the steering ramps DOWN so the car
+    // stays planted and doesn't snap into a slide. This is what real cars do
+    // (and what the previous code did poorly — it gave too much yaw at speed
+    // which caused the constant sliding).
     const speedSteerFade = Math.min(1, vAbs / CAR.minSteerSpeed);
+    // Steering angle ramps from full at low speed to ~30% at high speed.
+    // The previous code used a flat steer input which over-rotated at speed.
+    const speedSteerScale = THREE.MathUtils.lerp(1.0, 0.35, Math.min(1, vAbs / 35));
+    const effectiveSteer = steer * speedSteerScale;
+
     const yawKinematic = yawGrip * CAR.yawGripMultiplier / Math.max(vAbs, 5);
     const maxYaw = Math.min(CAR.maxYawLowSpeed, yawKinematic) *
       (this.onGrass ? 0.72 : 1) * (handbrake ? 1.3 : 1);
 
     // NOTE: with fwd = (sin h, 0, cos h), increasing h rotates the car LEFT,
     // so a positive steer input (right) needs a negative heading change.
-    const targetYaw = -steer * maxYaw * speedSteerFade * (vF < 0 ? -1 : 1);
+    const targetYaw = -effectiveSteer * maxYaw * speedSteerFade * (vF < 0 ? -1 : 1);
     const yaw = damp(this._yaw, targetYaw, CAR.yawDamping, dt);
     this._yaw = yaw;
     this.heading += yaw * dt;
@@ -333,8 +342,11 @@ export class VehiclePhysics {
     this.latAccel = damp(this.latAccel, this._yaw * Math.abs(this.vF), 6, dt);
     this.aLongS = damp(this.aLongS, aLong, 5, dt);
 
-    // visual front wheel angle
-    this.steerAngle = steer * THREE.MathUtils.lerp(0.5, 0.15, Math.min(1, vAbs / 45));
+    // visual front wheel angle — uses the EFFECTIVE (speed-scaled) steer so
+    // the visible wheel angle matches what the physics actually used. The
+    // previous code used the raw steer input, so at high speed the wheels
+    // looked fully locked but the car barely turned.
+    this.steerAngle = effectiveSteer * THREE.MathUtils.lerp(0.5, 0.15, Math.min(1, vAbs / 45));
 
     // --- suspension targets ------------------------------------------------------------
     this._updateSuspensionTargets(dt, loc2);

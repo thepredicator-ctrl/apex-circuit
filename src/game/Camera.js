@@ -39,10 +39,20 @@ export class CameraRig {
     this._first = true;
     this.smoothing = 1.0;             // settings multiplier
     this._t = 0;                      // shake clock
+    // speed-feel state
+    this._accelPunch = 0;             // 0..1, brief FOV punch on hard accel
+    this._brakePush = 0;              // 0..1, brief FOV compress on hard brake
+    this._impactShake = 0;            // decays after a collision
+    this._lastVFAbs = 0;              // for accel/brake detection
   }
 
   setSmoothing(mult) {
     this.smoothing = mult;
+  }
+
+  /** Trigger a camera impact shake (called by Game on wall hits / hard landings). */
+  impact(strength = 1) {
+    this._impactShake = Math.min(1.5, this._impactShake + strength);
   }
 
   setMode(mode, car, phys) {
@@ -183,6 +193,26 @@ export class CameraRig {
       this.curLook.lerp(_look, kLook);
     }
 
+    // ---- speed-feel: detect accel/brake transitions for FOV punch ----
+    // A brief FOV widen on hard accel gives a "rush" feeling without
+    // moving the camera backward. A brief FOV compress on hard brake
+    // gives a "decel" feeling. Both decay over ~0.6s.
+    const vAbs = Math.abs(phys.vF);
+    const dv = vAbs - this._lastVFAbs;
+    this._lastVFAbs = vAbs;
+    if (dv > 0.15) {
+      // accelerating hard this frame
+      this._accelPunch = Math.min(1, this._accelPunch + dv * 0.5);
+    }
+    if (dv < -0.15) {
+      // braking hard this frame
+      this._brakePush = Math.min(1, this._brakePush + (-dv) * 0.4);
+    }
+    this._accelPunch = THREE.MathUtils.damp(this._accelPunch, 0, 3, dt);
+    this._brakePush = THREE.MathUtils.damp(this._brakePush, 0, 4, dt);
+    // impact shake decays
+    this._impactShake = THREE.MathUtils.damp(this._impactShake, 0, 5, dt);
+
     // roll: steering + lateral g influence
     const targetRoll = THREE.MathUtils.clamp(
       inputState.steer * -CAMERA.rollMax - phys.latAccel * 0.0016,
@@ -190,9 +220,13 @@ export class CameraRig {
     );
     this.roll = THREE.MathUtils.damp(this.roll, targetRoll, 6, dt);
 
+    // FOV: base + speed boost + accel punch - brake compress + impact
     const speedN = Math.min(1, Math.abs(phys.vF) / CAR.maxSpeed);
-    const targetFov = CAMERA.fovBase + CAMERA.fovSpeedBoost * Math.pow(speedN, 1.25);
-    this.fov = THREE.MathUtils.damp(this.fov, targetFov, 4, dt);
+    const targetFov = CAMERA.fovBase
+      + CAMERA.fovSpeedBoost * Math.pow(speedN, 1.25)
+      + this._accelPunch * 4.0    // +4° briefly on hard accel
+      - this._brakePush * 2.0;    // -2° briefly on hard brake
+    this.fov = THREE.MathUtils.damp(this.fov, targetFov, 5, dt);
   }
 
   _updateHood(dt, phys) {
@@ -210,14 +244,27 @@ export class CameraRig {
       this.curLook.lerp(_look, kLook);
     }
 
+    // same speed-feel state updates so impact shake works in hood too
+    const vAbs = Math.abs(phys.vF);
+    const dv = vAbs - this._lastVFAbs;
+    this._lastVFAbs = vAbs;
+    if (dv > 0.15) this._accelPunch = Math.min(1, this._accelPunch + dv * 0.5);
+    if (dv < -0.15) this._brakePush = Math.min(1, this._brakePush + (-dv) * 0.4);
+    this._accelPunch = THREE.MathUtils.damp(this._accelPunch, 0, 3, dt);
+    this._brakePush = THREE.MathUtils.damp(this._brakePush, 0, 4, dt);
+    this._impactShake = THREE.MathUtils.damp(this._impactShake, 0, 5, dt);
+
     // roll with the car (bank + body roll, damped hard)
     const targetRoll = phys.roadRoll * 0.6 +
       THREE.MathUtils.clamp(-phys.latAccel * 0.0008, -0.025, 0.025);
     this.roll = THREE.MathUtils.damp(this.roll, targetRoll, 6, dt);
 
-    // hood FOV widens with speed (slightly less than chase to avoid nausea)
+    // hood FOV widens with speed + accel punch (slightly less than chase)
     const speedN = Math.min(1, Math.abs(phys.vF) / CAR.maxSpeed);
-    this.fov = CAMERA.hoodFov + CAMERA.hoodFovBoost * Math.pow(speedN, 1.2);
+    this.fov = CAMERA.hoodFov
+      + CAMERA.hoodFovBoost * Math.pow(speedN, 1.2)
+      + this._accelPunch * 3.0
+      - this._brakePush * 1.5;
   }
 
   apply(phys) {
@@ -228,12 +275,21 @@ export class CameraRig {
     const amp = this.mode === 'chase'
       ? CAMERA.chaseShake * Math.pow(sN, 2.2)
       : CAMERA.hoodShake * (0.25 + Math.pow(sN, 2));
-    if (amp > 0.0005) {
+    // impact shake adds a stronger, faster decaying vibration
+    const impactAmp = this._impactShake * 0.15;
+    const totalAmp = amp + impactAmp;
+    if (totalAmp > 0.0005) {
       const t = this._t;
       this.camera.position.x +=
         (Math.sin(t * 31.7) * 0.55 + Math.sin(t * 47.3) * 0.3 + Math.sin(t * 13.1) * 0.15) * amp;
       this.camera.position.y +=
         (Math.sin(t * 39.1 + 1.7) * 0.5 + Math.sin(t * 53.7) * 0.3) * amp * 0.7;
+      // impact shake is higher frequency + bigger amplitude
+      if (impactAmp > 0.001) {
+        this.camera.position.x += Math.sin(t * 73.0) * impactAmp;
+        this.camera.position.y += Math.sin(t * 89.0 + 1.3) * impactAmp * 0.8;
+        this.camera.position.z += Math.sin(t * 67.0 + 2.1) * impactAmp * 0.5;
+      }
     }
 
     this.camera.lookAt(this.curLook);
