@@ -353,8 +353,11 @@ export class VehiclePhysics {
   }
 
   _updateSuspensionTargets(dt, loc) {
-    const longF = clamp(this.aLongS / 11, -1, 1);          // + = accelerating
-    const leanR = clamp(this._yaw * Math.abs(this.vF) / 11, -1, 1); // + = turning left
+    // ---- weight transfer (drives body roll + pitch) ----------------------
+    // longF: + = accelerating (rear compresses, front unloads)
+    // leanR: + = turning left (right side compresses, left unloads)
+    const longF = clamp(this.aLongS / 11, -1, 1);
+    const leanR = clamp(this._yaw * Math.abs(this.vF) / 11, -1, 1);
     const base = 0.5;
 
     let fl = base - longF * 0.42 - leanR * 0.4;
@@ -362,7 +365,47 @@ export class VehiclePhysics {
     let rl = base + longF * 0.42 - leanR * 0.4;
     let rr = base + longF * 0.42 + leanR * 0.4;
 
-    // curb / bump excitation — alternate knock per wheel pair
+    // ---- per-wheel road height sampling (independent suspension) --------
+    // Each wheel samples the track surface height at its actual position.
+    // This makes the suspension react to real bumps, crests, and banking
+    // rather than a generic formula. The wheelbase + track width give us
+    // the 4 wheel positions in world space.
+    const halfWB = CAR.wheelbase / 2;
+    const halfTW = 1.5 / 2;  // 1.5 m track width (typical 911)
+    const fwdX = Math.sin(this.heading), fwdZ = Math.cos(this.heading);
+    const rgtX = -fwdZ, rgtZ = fwdX;  // right vector
+
+    // sample road height at each wheel hub
+    const wheelOffsets = [
+      [-halfWB, -halfTW],  // FL
+      [-halfWB,  halfTW],  // FR
+      [ halfWB, -halfTW],  // RL
+      [ halfWB,  halfTW]   // RR
+    ];
+    const wheelHeights = [0, 0, 0, 0];
+    for (let i = 0; i < 4; i++) {
+      const [fx, rx] = wheelOffsets[i];
+      const wx = this.position.x + fwdX * fx + rgtX * rx;
+      const wz = this.position.z + fwdZ * fx + rgtZ * rx;
+      // sample the track surface at this wheel position
+      const wloc = this.track.locate(wx, wz, loc.idx);
+      const wsurf = this.track.surfaceAt(wloc.idx, wloc.lateral);
+      wheelHeights[i] = wsurf.y;
+    }
+    // average road height under the car
+    const avgH = (wheelHeights[0] + wheelHeights[1] + wheelHeights[2] + wheelHeights[3]) / 4;
+    // per-wheel deviation from average — a wheel on a bump gets positive
+    // deviation (compresses more), a wheel over a dip gets negative (unloads)
+    for (let i = 0; i < 4; i++) {
+      const deviation = wheelHeights[i] - avgH;
+      // scale: 5 cm of road height difference = ~0.3 compression units
+      fl = (i === 0) ? fl + deviation * 6 : fl;
+      fr = (i === 1) ? fr + deviation * 6 : fr;
+      rl = (i === 2) ? rl + deviation * 6 : rl;
+      rr = (i === 3) ? rr + deviation * 6 : rr;
+    }
+
+    // ---- curb / bump excitation ------------------------------------------
     if (this.onCurb && Math.abs(this.vF) > 5) {
       this._bumpPhase += dt * SUSPENSION_FREQ;
       const bump = Math.sin(this._bumpPhase) * 0.5;

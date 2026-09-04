@@ -126,6 +126,24 @@ export class Track {
     this._buildFence();           // NEW: chain-link fence along straights
     this._buildMountains();
     this._buildClouds();
+    // References to the procedural surface meshes so they can be hidden
+    // when a GLB track model is loaded as the visible surface.
+    this._proceduralSurfaceMeshes = [
+      this.roadMesh, this.runoffMesh, this.groundMesh,
+      this.curbsMesh, this.wallMesh, this.wallTopsMesh
+    ].filter(Boolean);
+  }
+
+  /**
+   * Hide the procedural road/runoff/ground meshes — called when a GLB track
+   * model is loaded as the visible racing surface. The physics spline + curbs
+   * + tire stacks + signs + fences remain because they're either physics
+   * collision geometry or trackside details that complement the GLB track.
+   */
+  hideProceduralSurface() {
+    for (const m of this._proceduralSurfaceMeshes) {
+      if (m) m.visible = false;
+    }
   }
 
   // ---------------------------------------------------------------- textures
@@ -408,6 +426,7 @@ export class Track {
     const road = new THREE.Mesh(geo, mat);
     road.receiveShadow = true;
     this.group.add(road);
+    this.roadMesh = road;
   }
 
   // ----------------------------------------------------------------- runoff
@@ -438,6 +457,7 @@ export class Track {
     );
     runoff.receiveShadow = true;
     this.group.add(runoff);
+    this.runoffMesh = runoff;
   }
 
   // ------------------------------------------------------------------ curbs
@@ -488,6 +508,7 @@ export class Track {
       }));
       curbs.receiveShadow = true;
       this.group.add(curbs);
+      this.curbsMesh = curbs;
     }
   }
 
@@ -518,6 +539,7 @@ export class Track {
     );
     walls.receiveShadow = true;
     this.group.add(walls);
+    this.wallMesh = walls;
   }
 
   /**
@@ -548,6 +570,7 @@ export class Track {
     );
     strip.renderOrder = 2;
     this.group.add(strip);
+    this.wallTopsMesh = strip;
   }
 
   /**
@@ -659,6 +682,7 @@ export class Track {
     );
     ground.receiveShadow = true;
     this.group.add(ground);
+    this.groundMesh = ground;
   }
 
   // ------------------------------------------------------------- start line
