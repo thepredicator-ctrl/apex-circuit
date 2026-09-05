@@ -156,7 +156,30 @@ export class Car {
   _prepareExterior(scene) {
     stripExtras(scene);
 
-    // enable shadows on all meshes
+    // ---- strip junk meshes that are way bigger than the car -------------
+    // The Sketchfab export of the Audi RS6 includes a "hud1" material mesh
+    // (mesh 217) that's 338 meters across — it's a HUD/overlay element that
+    // should never appear in the game. It throws off the overall bounding
+    // box and would render as a giant invisible plane. Strip any mesh whose
+    // bounding box exceeds 8m in any dimension (the car itself is ~5m).
+    const junk = [];
+    scene.traverse((o) => {
+      if (!o.isMesh || !o.geometry) return;
+      // compute the mesh's local-space bounding box
+      o.geometry.computeBoundingBox();
+      const bb = o.geometry.boundingBox;
+      if (!bb) return;
+      const size = bb.getSize(new THREE.Vector3());
+      const maxDim = Math.max(size.x, size.y, size.z);
+      if (maxDim > 8) {
+        const matName = (o.material && o.material.name) || '';
+        console.warn(`[Car] Stripping junk mesh "${o.name}" (mat: ${matName}) — ${maxDim.toFixed(1)}m max dim`);
+        junk.push(o);
+      }
+    });
+    for (const o of junk) o.parent && o.parent.remove(o);
+
+    // enable shadows on all remaining meshes
     scene.traverse((o) => {
       if (o.isMesh) {
         o.castShadow = true;
