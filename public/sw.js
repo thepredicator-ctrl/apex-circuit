@@ -1,13 +1,13 @@
 /* eslint-disable no-restricted-globals */
 /**
- * Apex Circuit service worker — downloads the ENTIRE game onto the device
- * on the first visit (app shell + Three.js + the 911 / interior / tree GLB
+ * APEX ROADS service worker — downloads the ENTIRE game onto the device
+ * on the first visit (app shell + all Three.js bundles
  * models), then serves everything cache-first so the game launches instantly
  * and plays fully offline.
  */
 
 const VERSION = '__SW_VERSION__';
-const CACHE = `apex-circuit-${VERSION}`;
+const CACHE = `apex-roads-${VERSION}`;
 
 // replaced at build time by scripts/build-sw.mjs
 self.__PRECACHE_MANIFEST = __PRECACHE_URLS__;
@@ -57,7 +57,7 @@ self.addEventListener('activate', (event) => {
   event.waitUntil((async () => {
     const keys = await caches.keys();
     await Promise.all(keys
-      .filter((k) => k.startsWith('apex-circuit-') && k !== CACHE)
+      .filter((k) => k.startsWith('apex-roads-') && k !== CACHE)
       .map((k) => caches.delete(k)));
     await self.clients.claim();
   })());

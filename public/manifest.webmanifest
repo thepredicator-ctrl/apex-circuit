@@ -1,8 +1,8 @@
 {
-  "name": "Apex Circuit — 3D Arcade Racer",
-  "short_name": "Apex Circuit",
-  "description": "Porsche 911 night racing with a fully animated cockpit, real gearbox physics and a full offline install.",
-  "id": "apex-circuit",
+  "name": "APEX ROADS — Endless Procedural Driving",
+  "short_name": "Apex Roads",
+  "description": "An endless procedurally generated driving game with realistic tire physics and a full offline install.",
+  "id": "apex-roads",
   "start_url": "./",
   "scope": "./",
   "display": "standalone",

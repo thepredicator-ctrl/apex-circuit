@@ -1,7 +1,11 @@
 /**
- * main.js — bootstrap, WebGL capability check, global error handling,
- * service-worker registration, PWA install prompt and start/finish screen
- * wiring. Everything else lives in src/game + src/ui.
+ * main.js — bootstrap for APEX ROADS: WebGL capability check, global error
+ * handling, service-worker registration, PWA install / offline-download
+ * prompt, and start-screen wiring. Everything else lives in src/game + src/ui.
+ *
+ * APEX ROADS is an endless procedural driving game — no race, no timers,
+ * no downloadable assets. The service worker still precaches the app shell
+ * so the whole game installs and plays offline.
  */
 
 import './styles/main.css';
@@ -22,7 +26,7 @@ let assetsReady = false;
 function showFatal(message, hint = '') {
   if (fatalShown) return;
   fatalShown = true;
-  console.error('[ApexCircuit] FATAL:', message, hint);
+  console.error('[ApexRoads] FATAL:', message, hint);
   $('error-message').textContent = message;
   $('error-hint').textContent = hint;
   errorOverlay.style.display = '';
@@ -31,16 +35,19 @@ function showFatal(message, hint = '') {
 }
 
 function showRuntimeWarning(message) {
-  console.error('[ApexCircuit] Runtime error:', message);
+  console.error('[ApexRoads] Runtime error:', message);
 }
 
 // global error nets — a blank screen is never acceptable
 window.addEventListener('error', (e) => {
+  if (e.error && e.error.stack) console.error('[ApexRoads] stack:', e.error.stack);
   if (!booted || fatalShown) showFatal(e.message || 'Unknown error', 'The game hit an unexpected error. Reload the page to try again.');
   else showRuntimeWarning(e.message);
 });
 window.addEventListener('unhandledrejection', (e) => {
-  const msg = e && e.reason ? (e.reason.message || String(e.reason)) : 'Unknown promise rejection';
+  const reason = e && e.reason;
+  if (reason && reason.stack) console.error('[ApexRoads] stack:', reason.stack);
+  const msg = reason ? (reason.message || String(reason)) : 'Unknown promise rejection';
   if (!booted || fatalShown) showFatal(msg, 'The game hit an unexpected error. Reload the page to try again.');
   else showRuntimeWarning(msg);
 });
@@ -57,27 +64,18 @@ function checkWebGL() {
 }
 
 // ---- PWA: service worker (precaches the whole game onto the device) ----------
-// Also: an explicit "DOWNLOAD GAME TO DEVICE" button (works on iOS Safari,
-// which never fires beforeinstallprompt). The button asks the browser for
-// persistent storage permission so the cached game survives the 7-day
-// eviction window that iOS Safari applies to non-installed PWAs.
 let swRegistration = null;
 let precacheReportedDone = false;
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
     navigator.serviceWorker.register('./sw.js').then((reg) => {
       swRegistration = reg;
-      // surface the SW's precache progress on the loading screen
       navigator.serviceWorker.addEventListener('message', (ev) => {
         const d = ev.data || {};
         if (d.type === 'precache-progress' && !assetsReady) {
           const pct = Math.round((d.done / Math.max(1, d.total)) * 100);
           if (loadingLabel) loadingLabel.textContent = `DOWNLOADING GAME TO DEVICE — ${pct}%`;
           if (loadingBar) loadingBar.style.width = `${pct}%`;
-          const ds = $('download-state');
-          if (ds && d.total > 0) {
-            ds.textContent = `${d.done} / ${d.total} ASSETS CACHED`;
-          }
         }
         if (d.type === 'precache-done') {
           precacheReportedDone = true;
@@ -120,9 +118,6 @@ function markDownloaded() {
   if (el) el.textContent = 'GAME DOWNLOADED — PLAYS OFFLINE';
 }
 
-// Show or hide the explicit "DOWNLOAD GAME TO DEVICE" button depending on
-// the current state: hidden once the SW reports the precache is complete,
-// or once we detect the game is already installed/standalone.
 function refreshDownloadButton() {
   const btn = $('download-button');
   if (!btn) return;
@@ -144,8 +139,6 @@ async function triggerExplicitDownload() {
     btn.disabled = true;
     btn.textContent = 'ASKING FOR PERMISSION…';
   }
-  // Ask the browser for persistent-storage permission first so the cached
-  // game survives iOS Safari's 7-day eviction window for non-installed PWAs.
   const persisted = await requestPersistentStorage();
   if (btn) {
     btn.disabled = false;
@@ -153,13 +146,9 @@ async function triggerExplicitDownload() {
       ? 'PERMISSION GRANTED — CACHING…'
       : 'CACHING GAME (PERMISSION NOT GRANTED)…';
   }
-  // Kick the service worker to re-run its precache pass and stream the
-  // progress messages back to the loading screen.
   if (swRegistration && swRegistration.active) {
     swRegistration.active.postMessage({ type: 'precache-status' });
   }
-  // If the SW is not active yet (first visit, still installing), the
-  // progress messages will arrive as part of the install event.
 }
 
 // ---- PWA: custom install button ---------------------------------------------
@@ -182,14 +171,12 @@ if (installBtn) {
     installBtn.style.display = 'none';
   });
 }
-// already installed (standalone)?
 if (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches) {
   if (installBtn) installBtn.style.display = 'none';
   if (document.readyState !== 'loading') markDownloaded();
   else window.addEventListener('DOMContentLoaded', markDownloaded);
 }
 
-// ---- explicit pre-download button (works on iOS Safari too) ----------------
 window.addEventListener('DOMContentLoaded', () => {
   const dlBtn = $('download-button');
   if (dlBtn) {
@@ -201,10 +188,6 @@ window.addEventListener('DOMContentLoaded', () => {
 });
 
 // ---- iOS audio unlock -------------------------------------------------------
-// iOS Safari blocks AudioContext from producing sound until it's created (or
-// resumed) inside a user gesture. We attach a one-shot touchend listener
-// that creates a silent oscillator + gain ramp, which "unlocks" audio for
-// the rest of the session. The real audio is initialized later by Game.startRace().
 function unlockIOSAudio() {
   if (!isIOS()) return;
   const Ctx = window.AudioContext || window.webkitAudioContext;
@@ -235,7 +218,7 @@ async function boot() {
   if (!checkWebGL()) {
     showFatal(
       'WebGL is not available in this browser.',
-      'Apex Circuit needs WebGL to render its 3D graphics. Try a recent version of Chrome, Edge, Firefox or Safari, and make sure hardware acceleration is enabled.'
+      'Apex Roads needs WebGL to render its 3D graphics. Try a recent version of Chrome, Edge, Firefox or Safari, and make sure hardware acceleration is enabled.'
     );
     return;
   }
@@ -245,10 +228,10 @@ async function boot() {
     if (!booted) {
       showFatal(
         'The game is taking unusually long to start.',
-        'Your device or connection may be too slow for this game\u2019s graphics assets. Try reloading, updating your browser, or enabling hardware acceleration.'
+        'Your device or connection may be too slow for this game\u2019s graphics. Try reloading, updating your browser, or enabling hardware acceleration.'
       );
     }
-  }, 90000);
+  }, 60000);
 
   try {
     const game = new Game({
@@ -256,14 +239,18 @@ async function boot() {
       onReady: () => {
         booted = true;
         clearTimeout(bootTimeout);
-        // the start screen unlocks after the GLB assets finish loading
+        // everything is procedural — the world is ready as soon as state=idle
         const check = setInterval(() => {
-          if (game.state === 'idle' || game.state === 'finished') {
+          if (game.state === 'idle' || game.state === 'driving') {
             clearInterval(check);
             assetsReady = true;
             loadingScreen.style.display = 'none';
             startScreen.style.display = '';
-            updateStartBest();
+            const seedEl = $('start-seed');
+            if (seedEl) {
+              seedEl.textContent = `ROAD SEED — ${game.journey.seed}`;
+              seedEl.style.display = '';
+            }
           }
         }, 120);
       },
@@ -277,6 +264,7 @@ async function boot() {
     wireStartScreen(game);
   } catch (err) {
     clearTimeout(bootTimeout);
+    if (err && err.stack) console.error('[ApexRoads] init stack:', err.stack);
     showFatal(
       err && err.message ? err.message : 'Failed to initialize the game',
       'Possible causes: WebGL disabled, outdated browser, or insufficient GPU memory. Reload the page to try again.'
@@ -284,30 +272,19 @@ async function boot() {
   }
 }
 
-function updateStartBest() {
-  try {
-    const v = parseFloat(localStorage.getItem('apex-circuit:best-lap'));
-    if (isFinite(v) && v > 0) {
-      const m = Math.floor(v / 60);
-      const s = Math.floor(v % 60);
-      const ms = Math.floor((v % 1) * 1000);
-      $('start-best').textContent = `YOUR BEST LAP — ${m}:${String(s).padStart(2, '0')}.${String(ms).padStart(3, '0')}`;
-      $('start-best').style.display = '';
-    }
-  } catch { /* no storage, no problem */ }
-}
-
 function wireStartScreen(game) {
   let started = false;
   const begin = () => {
     if (started || fatalShown) return;
-    if (game.state === 'loading' || !game.car.ready) return; // still streaming
+    if (game.state === 'loading' || !game.car.ready) return;
     started = true;
+    loadingScreen.style.display = 'none';
     startScreen.style.display = 'none';
-    game.startRace();
+    game.startDriving();
   };
 
-  $('start-button').addEventListener('click', begin);
+  const startBtn = $('start-button');
+  if (startBtn) startBtn.addEventListener('click', begin);
   startScreen.addEventListener('touchstart', begin, { passive: true });
   window.addEventListener('keydown', function onKey(e) {
     if (started) {
@@ -317,32 +294,6 @@ function wireStartScreen(game) {
     if (e.ctrlKey || e.metaKey || e.altKey) return;
     begin();
   });
-
-  $('restart-button').addEventListener('click', () => {
-    $('finish-screen').style.display = 'none';
-    game.restartRace();
-  });
-
-  // any key on the finish screen restarts (after a small delay to avoid skips)
-  let finishedAt = 0;
-  const observer = new MutationObserver(() => {
-    const finishVisible = $('finish-screen').style.display !== 'none';
-    if (finishVisible) {
-      finishedAt = performance.now();
-      window.addEventListener('keydown', function onFinishKey(e) {
-        if ($('finish-screen').style.display === 'none') {
-          window.removeEventListener('keydown', onFinishKey);
-          return;
-        }
-        if (performance.now() - finishedAt < 900) return;
-        if (e.code === 'Escape') return;
-        window.removeEventListener('keydown', onFinishKey);
-        $('finish-screen').style.display = 'none';
-        game.restartRace();
-      });
-    }
-  });
-  observer.observe($('finish-screen'), { attributes: true, attributeFilter: ['style'] });
 }
 
 boot();

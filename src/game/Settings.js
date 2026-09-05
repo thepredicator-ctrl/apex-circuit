@@ -1,11 +1,12 @@
 /**
  * Settings — player preferences persisted in localStorage.
- * Transmission mode, camera mode, graphics quality, volumes, sensitivities.
+ * Transmission mode, camera mode, time of day, graphics quality, volumes,
+ * sensitivities, paint.
  */
 
 import { DEFAULT_SETTINGS } from './Constants.js';
 
-const KEY = 'apex-circuit:settings';
+const KEY = 'apex-roads:settings';
 
 /**
  * Pick a sensible default graphics quality based on the device.
@@ -57,6 +58,7 @@ export class Settings {
   get transmission() { return this.data.transmission; }
   get camera() { return this.data.camera; }
   get quality() { return this.data.quality; }
+  get timeOfDay() { return this.data.timeOfDay; }
   get masterVolume() { return this.data.masterVolume; }
   get engineVolume() { return this.data.engineVolume; }
   get steerSensitivity() { return this.data.steerSensitivity; }

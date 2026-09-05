@@ -1,15 +1,18 @@
 {
-  "name": "apex-circuit",
+  "name": "apex-roads",
   "private": true,
-  "version": "1.0.0",
+  "version": "2.0.0",
   "type": "module",
-  "description": "Apex Circuit — a polished 3D arcade racing game for desktop and mobile browsers, built with Three.js and Vite.",
+  "description": "APEX ROADS — an endless procedurally generated driving game (slowroads-style) built with Three.js and Vite: infinite seeded roads, streaming terrain and realistic tire physics.",
   "keywords": [
-    "racing",
+    "driving",
     "game",
+    "procedural-generation",
     "threejs",
     "webgl",
-    "arcade",
+    "vehicle-physics",
+    "endless",
+    "pwa",
     "vite"
   ],
   "license": "MIT",

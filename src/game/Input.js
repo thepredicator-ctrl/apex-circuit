@@ -4,7 +4,7 @@
  *
  * Driving: W/S or ↑/↓ throttle & brake, A/D or ←/→ steer, SPACE handbrake.
  * Gearbox: Q downshift, E upshift (manual mode).
- * Views/system: V camera, M transmission mode, R reset.
+ * Views/system: V camera, M transmission mode, R recenter, N new road.
  * All of the above also exist as touch buttons on mobile.
  */
 
@@ -43,7 +43,8 @@ export class Input {
     this.sensitivity = 1.0;   // steering ramp multiplier (settings)
 
     // edge callbacks (set by Game)
-    this.onResetKey = null;            // R pressed
+    this.onResetKey = null;            // R pressed (recenter)
+    this.onNewRoadKey = null;          // N pressed (generate a new road)
     this.onStartGesture = null;        // any key / tap — used for start screen
     this.onShiftUp = null;             // E
     this.onShiftDown = null;           // Q
@@ -68,6 +69,7 @@ export class Input {
     if (!e.repeat) {
       switch (e.code) {
         case 'KeyR': if (this.onResetKey) this.onResetKey(); break;
+        case 'KeyN': if (this.onNewRoadKey) this.onNewRoadKey(); break;
         case 'KeyE': if (this.onShiftUp) this.onShiftUp(); break;
         case 'KeyQ': if (this.onShiftDown) this.onShiftDown(); break;
         case 'KeyV': if (this.onCameraToggle) this.onCameraToggle(); break;

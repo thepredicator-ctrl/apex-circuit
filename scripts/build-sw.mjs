@@ -1,6 +1,6 @@
 /**
  * build-sw — post-build step: stamp the service worker with the full list of
- * emitted files (app shell + hashed bundles + GLB models + icons) so the
+ * emitted files (app shell + hashed bundles + icons) so the
  * first visit downloads the complete game onto the device.
  */
 import { readdirSync, statSync, readFileSync, writeFileSync } from 'node:fs';

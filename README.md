@@ -1,251 +1,139 @@
-# Apex Circuit — 3D Arcade Racer
+# APEX ROADS — Endless Procedural Driving
 
-A polished 3D arcade racing game that runs in modern desktop and
-mobile/tablet browsers — **play it live:
-https://thepredicator-ctrl.github.io/apex-circuit/** — featuring a real
-**Porsche 911 Carrera 4S** with four independently animated wheels (spin,
-steer, suspension travel), a **Jaguar XJ220 cockpit** with an animated
-steering wheel and a live instrument cluster with **physical moving
-needles**, a real gearbox with manual / automatic modes, weight-transfer
-physics, elevation + banked corners, an instanced GLB tree forest and large
-touch controls. Built with **HTML, CSS, JavaScript and
-[Three.js](https://threejs.org/)**, bundled by **Vite**. Engine and
-environment audio are synthesized live (no samples), and the production
-build **pre-downloads the entire game onto your device** via a service
-worker so it installs like an app and plays fully offline.
+**APEX ROADS** is an endless, *slowroads*-style driving game that runs entirely
+in your browser: an infinite road generated as you drive, winding through
+rolling hills, patchwork farmland, ranch fences, barns, pine forests and
+wind farms — paired with a proper vehicle-dynamics simulation (slip angles,
+Pacejka-style tire curves, friction ellipse, load transfer) that makes
+braking, weight transfer and catchable drifts feel real.
 
-![Tech](https://img.shields.io/badge/Three.js-r182-049ef4) ![Vite](https://img.shields.io/badge/Vite-7-9575ff) ![License](https://img.shields.io/badge/license-MIT-green)
+Play it live: **https://thepredicator-ctrl.github.io/apex-circuit/**
 
 ## Features
 
-- **Porsche 911 Carrera 4S exterior** (Karol Miklas, CC-BY-SA-4.0) — the
-  real body, glass, lights and brake calipers, upgraded with clearcoat
-  paint presets (**8 factory colors** selectable in Settings), emissive
-  headlamps with spotlight beams + lens halos, and a brake-reactive rear
-  light bar
-- **Four animated wheels split from the model's merged axles** — every
-  corner spins at exactly `v / r` around its true hub, front wheels **steer
-  around their own kingpin axis**, every wheel travels independently on its
-  suspension, and dark wheel-well liners keep the arches looking solid
-- **Jaguar XJ220 cockpit** (Gerhald, CC-BY-4.0) mirrored to LHD — the
-  model's **steering wheel is re-pivoted around its column axis and rotates
-  ~137° lock-to-lock** with your input, sport pedals + shifter + handbrake
-  are rigged to the drivetrain state
-- **Instrument cluster with physical moving needles** — a canvas-drawn
-  dual-dial face (tach + speed, shift LEDs, gear, lap timing) with **real
-  3D red needles** sweeping the dials at 20 Hz, plus an **MMI-style center
-  screen** showing the live track minimap with the car dot moving in real
-  time
-- **First-person cockpit camera** (`V`) — sits at the driver's head, rides
-  the suspension and banking, dips under braking, leans in corners; the
-  in-dash cluster shows live RPM / speed / gear
-- **Real transmission simulation** — torque curve, 6 gear ratios + reverse,
-  final drive, clutch behavior on launch, rev limiter, engine braking and a
-  sequential manual gearbox (`R-N-1…6`) with torque-cut shifts. **Automatic**
-  mode shifts by RPM with kickdown and engages reverse when you brake at a
-  standstill
-- **Weight-transfer physics** — drive force is capped by rear traction
-  (wheelspin), braking is traction-limited, accelerating loosens the rear,
-  braking loosens the front, downforce adds grip at speed, handbrake unglues
-  the rear axle — drifting is earned, not automatic
-- **Suspension** — per-wheel spring/damper travel with curb rumble, grass
-  jitter, body roll in corners, pitch under accel/brake and an underdamped
-  body settle after bumps
-- **Elevation + banking** — the circuit rolls with the terrain (smooth
-  hills), corners get progressive banking that eases in/out, gravel runoff
-  areas, terrain mesh that follows the road height
-- **Complete 3D circuit** — closed Catmull-Rom spline (~1.3 km) with asphalt,
-  painted edge lines, red/white curbs, concrete walls with tire stacks,
-  grass, a **forest of ~150 instanced GLB trees** (TechArtBGN, CC-BY-4.0), a grandstand, brake-marker boards, sponsor boards,
-  light poles, start/finish gantry with a **5-lamp start-light tree**,
-  checkpoint gates, distant mountains, clouds, gradient sky, fog and
-  dynamic shadows
-- **Race system** — 3 laps, 3 checkpoint gates per lap that must be crossed
-  **in order**, lap/total/best timing, 3-2-1-GO! countdown with locked
-  controls and start lights, wrong-way warning, anti-cheat (backwards finish
-  crossings and gate skips never count), finish screen with lap breakdown,
-  best-lap persistence via `localStorage`
-- **Cameras** — chase camera with velocity prediction, accel/brake
-  reaction, corner swing, subtle roll, aggressive speed FOV (+17°),
-  high-speed camera shake and ground-clipping protection; cockpit camera
-  with speed FOV, head inertia and suspension motion — plus world-anchored
-  **speed-line streaks** that fade in above ~100 km/h for a real sense of
-  speed
-- **Settings menu** (Esc or the HUD button) — automatic/manual transmission,
-  camera mode, graphics quality (LOW / MEDIUM / HIGH), **paint color**, master
-  & engine volume, steering speed, camera smoothing — persisted via
-  `localStorage`
-- **Procedural flat-six engine audio** (Web Audio API, no samples) — a
-  baked combustion-pulse loop (144 uneven, ringing cylinder pulses) played
-  back at `rpm / 2400` with a bright top-end scream layer, dual exhaust
-  body resonances, throttle-driven drive + lowpass, sub octave and
-  combustion roar — plus a full **starter-motor sequence (whirr → catch →
-  idle flare)** on launch, **exhaust crackles and afterfire pops** on
-  lift-off and downshifts, intake + plenum hiss, dual-band tire screech,
-  wind rush, cabin rumble, curb rumble and **impact thuds on wall hits**.
-  The game runs silently if audio is unavailable
-- **Racing HUD** — canvas tachometer with shift lights and big gear readout,
-  lap counter with checkpoint pips, current lap / total / best times,
-  transmission & camera badges, reset/restart/sound/settings buttons, lap
-  toasts, countdown display, finish panel
-- **Touch controls** — large multi-touch-safe steering, throttle, brake,
-  drift, **gear ±**, **camera**, **transmission** and reset buttons (pointer
-  events + pointer capture), shown automatically on touch devices,
-  comfortable in iPad landscape
-- **Mobile-friendly rendering** — capped device pixel ratio, quality presets
-  that scale shadows/fog/particles, instanced scenery, merged geometry
-- **Robust error handling** — WebGL capability check, visible error overlay
-  for initialization failures, console logging; a blank screen is never
-  shown
+- **Endless procedural roads** — the centerline is derived from seeded
+  value-noise (curvature → heading, slope → elevation, superelevation on
+  corners), so the world is deterministic per seed and streams in 128 m
+  chunks around the car. Press **N** anytime for a brand-new road, or share
+  a seed via `?seed=123456` in the URL.
+- **Streaming 3D terrain** — rolling hills blend smoothly into the road
+  corridor (no cliffs, no pops), with distant snow-capped mountains riding
+  the horizon.
+- **Rich living environment** — mixed conifer/broadleaf forests, grass
+  tufts, bushes and rocks, reflector posts, wooden ranch fences, hay bales,
+  red barns, power poles with crossarms, **spinning wind turbines**,
+  drifting volumetric-style clouds, and a flock of birds circling overhead.
+- **Real vehicle physics** — a dynamic bicycle model with per-axle slip
+  angles, Pacejka "magic formula" tires with post-peak grip falloff, a
+  friction ellipse for combined slip, longitudinal + lateral load transfer,
+  aerodynamic downforce, load-sensitive grip, tire force relaxation length,
+  a 6-speed gearbox with clutch slip and rev limiter, and an emergency
+  handbrake with proper locked-wheel kinetics. Understeer, oversteer and
+  counter-steering all *emerge* from the model — nothing is scripted.
+- **Detailed low-poly coupe** — sculpted tapered body panels, fender arches,
+  raked greenhouse with chrome beltline trim, 5-spoke alloys over visible
+  brake discs and red calipers, dual exhausts, lip spoiler, grille slats,
+  LED daytime-running lights, full-width taillight bar (brake-reactive),
+  mirrors, wipers, sunroof and shark-fin antenna. Fully modeled cockpit with
+  animated gauges (view with **V**).
+- **Four times of day** — dawn / day / dusk / night presets drive a gradient
+  sky shader, sun/moon, fog, star field, cloud tint and auto headlights.
+- **Full HUD** — canvas tachometer with shift lights and gear indicator,
+  journey odometer, altitude and road seed. No timers: this is a relaxing
+  drive, not a race.
+- **PWA** — installable, works offline after the first visit (service
+  worker precaches the whole game; zero network assets are used at runtime).
 
 ## Install it on your device (PWA)
 
-Apex Circuit is a **Progressive Web App**. On the first visit a service
-worker downloads the entire game — app shell, Three.js bundle and all three
-GLB models — onto the device (watch the progress bar on the loading screen).
-After that the game launches from the home screen / app drawer like a native
-app and **plays fully offline**. Chrome / Edge on desktop and Android show an
-**INSTALL GAME ON DEVICE** button on the start screen; on iOS use
-*Share → Add to Home Screen*.
-
-## Model & asset credits
-
-The game ships with three community models (optimized with
-[gltf-transform](https://gltf-transform.dev/), vertex-quantized):
-
-| Asset | Author | License |
-| ----- | ------ | ------- |
-| Porsche 911 Carrera 4S | [Karol Miklas](https://sketchfab.com/karolmiklas) | CC-BY-SA-4.0 |
-| Car interior (Jaguar XJ220) | [Gerhald](https://sketchfab.com/Gerhald) | CC-BY-4.0 |
-| Tree GN | [TechArtBGN](https://sketchfab.com/TechArtBGN) | CC-BY-4.0 |
-
-All other meshes, textures and every sound are generated procedurally in
-code. Engine audio is a real-time synthesis, not a recording.
+Open the site, then use **INSTALL GAME ON DEVICE** (Chrome/Edge desktop &
+Android) — iOS Safari users can use *Share → Add to Home Screen* and the
+**PRE-DOWNLOAD GAME** button to keep the cached game beyond Safari's
+7-day eviction window.
 
 ## Quick start
 
 ```bash
 npm install
-npm run dev
+npm run dev        # → http://localhost:5173
 ```
-
-Open the printed local URL (default `http://localhost:5173`).
-Click / tap / press any key to start.
 
 ## Production build
 
 ```bash
-npm run build      # outputs static files to dist/
-npm run preview    # serves dist/ locally to verify
+npm run build      # vite build + service-worker precache manifest
+npm run preview    # serve dist/ locally
 ```
-
-The build is fully static — everything (Three.js included) is bundled, so
-the game does not depend on any CDN at runtime.
 
 ## Controls
 
-### Desktop
+| Key                        | Action                                  |
+| -------------------------- | --------------------------------------- |
+| `W` / `↑`                  | Throttle                                |
+| `S` / `↓`                  | Brake / reverse                         |
+| `A` `D` / `←` `→`          | Steer                                   |
+| `Space`                    | Handbrake (locked rear slides)          |
+| `Q` / `E`                  | Shift down / up (manual mode)           |
+| `M`                        | Auto ↔ manual transmission              |
+| `V`                        | Camera: chase → hood → cockpit          |
+| `R`                        | Recenter car on the road                |
+| `N`                        | Generate a brand-new road (new seed)    |
+| `Esc`                      | Settings                                |
 
-| Key                       | Action                                |
-| ------------------------- | ------------------------------------- |
-| `W` / `↑`                 | Throttle                              |
-| `S` / `↓`                 | Brake (hold at standstill: reverse in auto) |
-| `A` / `←`                 | Steer left                            |
-| `D` / `→`                 | Steer right                           |
-| `Space`                   | Handbrake (drift)                     |
-| `Q`                       | Shift down (manual mode)              |
-| `E`                       | Shift up (manual mode)                |
-| `V`                       | Switch chase ↔ cockpit camera         |
-| `M`                       | Toggle automatic ↔ manual gearbox     |
-| `R`                       | Reset car onto track                  |
-| `Esc`                     | Settings menu                         |
-
-Pressing `Q`/`E` while in automatic mode switches the gearbox to manual.
-All settings (including volumes and graphics quality) also live in the
-settings menu and are remembered between sessions.
-
-### Mobile / tablet
-
-Large on-screen buttons appear automatically on touch devices:
-steer left / right (bottom-left), **GAS**, **BRAKE** and **DRIFT**
-(bottom-right), **gear − / +** next to the pedals, and **camera** /
-**transmission** / **reset** buttons (top-right). Multi-touch is supported —
-steer and throttle simultaneously. Hold **BRAKE** while stopped to reverse
-in automatic mode.
-
-## Deploying as a static website
-
-`npm run build` produces a self-contained `dist/` folder that works on any
-static host, because all asset paths are relative (`base: './'`):
-
-- **GitHub Pages** — a ready-made workflow is included
-  (`.github/workflows/deploy.yml`): enable *Settings → Pages → Source:
-  GitHub Actions* and every push to `main` builds and deploys the game
-  automatically. Alternatively push the contents of `dist/` to a `gh-pages`
-  branch.
-- **Netlify / Cloudflare Pages** — build command `npm run build`,
-  publish directory `dist`
-- **Vercel** — framework preset *Vite*; zero config
-- **Any web server** — copy `dist/` into your web root
-  (`nginx`, Apache, S3 + CloudFront, …)
+Touch devices get on-screen steering, pedals, gears and camera controls
+automatically.
 
 ## Project structure
 
 ```
-├── index.html              # shell: canvas, overlays (start/finish/error)
-├── vite.config.js          # base './', build config
-├── public/
-│   └── favicon.svg         # checkered-flag icon
-└── src/
-    ├── main.js             # bootstrap, WebGL check, error handling, screens
-    ├── styles/
-    │   └── main.css        # HUD, overlays, touch controls, responsive rules
-    ├── game/
-    │   ├── Constants.js    # all tuning values (physics, transmission, camera)
-    │   ├── Game.js         # engine orchestrator, fixed-step loop, settings
-    │   ├── Track.js        # procedural circuit + elevation/banking + scenery
-    │   ├── Environment.js  # sky shader, fog, lights, shadows, env probe
-    │   ├── Car.js          # detailed procedural car + wheel arches + wheels
-    │   ├── Interior.js     # Audi-style cockpit, steering wheel, live screens
-    │   ├── Physics.js      # weight-transfer vehicle physics + surfaces
-    │   ├── Transmission.js # engine, torque curve, gears, clutch, shifting
-    │   ├── Race.js         # laps, checkpoints, timers, countdown, finish
-    │   ├── Camera.js       # chase + cockpit camera rig (shake, speed FOV)
-    │   ├── Input.js        # keyboard + touch → smoothed control state
-    │   ├── Audio.js        # Web Audio V10-style synthesis + effects
-    │   ├── Settings.js     # persisted player settings
-    │   └── Effects.js      # pooled smoke/dust particles + speed lines
-    └── ui/
-        ├── HUD.js          # DOM HUD (tachometer, panels, settings, finish)
-        └── TouchControls.js# touch button clusters (pointer events)
+index.html              app shell (loading / start / error screens)
+src/
+  main.js               bootstrap, WebGL check, PWA install + offline cache
+  styles/main.css       HUD, overlays, touch controls
+  game/
+    Game.js             orchestrator: loop, journey state, settings, quality
+    World.js            endless road + terrain streaming, all scenery
+    Physics.js          dynamic bicycle model, Pacejka tires, handbrake
+    Transmission.js     engine + 6-speed gearbox + clutch model
+    Car.js              procedural detailed coupe + wheels + lights
+    Interior.js         procedural cockpit, dashboard and gauges
+    Environment.js      sky shader, sun/moon, fog, stars, clouds, birds
+    Camera.js           chase / hood / cockpit rigs
+    Audio.js            procedural engine, tires, wind, chimes
+    Effects.js          drift smoke / dust particles, speed lines
+    Input.js            keyboard + gamepad-ish smoothing, touch bridging
+    Constants.js        every tuning knob (vehicle, world, quality, paints)
+    Settings.js         persisted player settings
+  ui/
+    HUD.js              tachometer canvas, journey panel, settings panel
+    TouchControls.js    on-screen controls for phones/tablets
+public/                 PWA manifest, icons, service worker
+scripts/                build helpers (precache manifest, icon generator)
 ```
 
 ## Implementation notes
 
-- **Physics** runs at a fixed 120 Hz with an accumulator (max 8 substeps) so
-  handling is frame-rate independent; rendering runs per rAF frame.
-- **Transmission**: `rpm = |v| / wheelRadius × gearRatio × finalDrive ×
-  60 / 2π`; wheel force = `torque(rpm) × ratio × efficiency / wheelRadius`,
-  capped by rear-axle traction. The clutch slips below ~5.5 m/s on launch
-  so the engine revs freely and the cap keeps launches believable.
-- **Track sampling**: the circuit centerline is sampled into 1000 points.
-  Physics uses a windowed nearest-sample search for surface lookup
-  (`asphalt/curb/grass`), signed lateral offset (wall collision pushes back
-  along the *track* normal), surface height incl. banking and race progress
-  `s ∈ [0,1)`.
-- **Anti-cheat**: three gates at 30 % / 62 % / 85 % of the lap must be
-  collected in order and near the centerline; only a forward, fully-gated
-  crossing of `s = 0` counts a lap. Reverse crossings are ignored.
-- **Debug hooks**: `window.__game` exposes the running game (useful for
-  automated tests and tinkering).
+- **Road model** — every 4 m sample derives curvature, slope and banking
+  from layered value noise on its *absolute index*, so chunks can be
+  generated incrementally in any travel direction with zero seams.
+  Chunks own their slice of road ribbon, two terrain strips (vertex-colored
+  with dry/grass/field tints) and instanced scenery allocated from recycled
+  pools, so driving 100 km uses bounded memory.
+- **Vehicle model** — forces live at the axle: slip angles from CG velocity
+  + yaw rate, tire forces via the magic formula with load sensitivity and
+  post-peak falloff, longitudinal forces capped by the friction ellipse,
+  weight transfer from true CG acceleration. At parking speeds it blends
+  into a kinematic model so maneuvers stay precise.
+- **Performance** — flat/low-poly shading, instanced scenery, capped shadow
+  frustum that follows the car, and LOW/MED/HIGH quality presets (pixel
+  ratio, shadows, fog distance, scenery density).
 
 ## Browser support
 
-Modern desktop and mobile browsers with WebGL (Chrome, Edge, Firefox,
-Safari, iOS Safari, Chrome for Android). The game shows a clear message if
-WebGL is unavailable.
+Any modern browser with WebGL2 (Chrome, Edge, Firefox, Safari 16+). Works
+on desktop and mobile; quality scales down automatically on phones.
 
 ## License
 
-MIT. All game code, models, textures and audio are generated from scratch —
-no third-party assets beyond the npm packages listed in `package.json`.
+MIT — see `LICENSE` if present. Three.js is bundled as an npm dependency
+under its own MIT license.

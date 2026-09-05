@@ -4,23 +4,22 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
   <meta name="theme-color" content="#0b0f14" />
-  <meta name="description" content="Apex Circuit — a 3D arcade racing game with a Porsche 911, a fully animated XJ220 cockpit with moving gauge needles, real gearbox physics and an offline install that downloads the whole game onto your device. Three laps, drifting physics, touch controls." />
+  <meta name="description" content="APEX ROADS — an endless procedurally generated driving game. An infinite road born as you drive, through rolling hills, farms and forests, with realistic tire physics, weight transfer and catchable drifts. Fully offline-installable PWA." />
   <meta name="mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
-  <meta name="apple-mobile-web-app-title" content="Apex Circuit" />
+  <meta name="apple-mobile-web-app-title" content="Apex Roads" />
   <meta name="format-detection" content="telephone=no" />
   <meta name="apple-touch-fullscreen" content="yes" />
   <meta name="touch-fullscreen" content="yes" />
   <meta name="x5-fullscreen" content="true" />
-  <meta name="updegree-fullscreen" content="true" />
   <link rel="manifest" href="./manifest.webmanifest" />
   <!-- iOS home-screen icon (PNG, not SVG — iOS ignores SVG apple-touch-icons) -->
   <link rel="apple-touch-icon" href="./icons/icon-192.png" />
   <link rel="apple-touch-icon" sizes="167x167" href="./icons/icon-192.png" />
   <link rel="apple-touch-icon" sizes="180x180" href="./icons/icon-512.png" />
   <link rel="icon" type="image/svg+xml" href="./favicon.svg" />
-  <title>Apex Circuit — 3D Arcade Racer</title>
+  <title>APEX ROADS — Endless Procedural Driving</title>
   <style>
     /* Critical loading styles inline so the loading screen looks right before JS/CSS arrive */
     html, body { margin: 0; padding: 0; background: #0b0f14; overflow: hidden; height: 100%; }
@@ -45,7 +44,7 @@
   <!-- Loading -->
   <div id="loading-screen" class="screen">
     <div class="spinner"></div>
-    <div id="loading-label" style="font-size:15px; letter-spacing:4px; font-weight:600;">LOADING TRACK…</div>
+    <div id="loading-label" style="font-size:15px; letter-spacing:4px; font-weight:600;">GENERATING WORLD…</div>
     <div style="width:min(420px, 70vw); height:4px; border-radius:2px; background:rgba(255,255,255,.12); margin-top:16px; overflow:hidden;">
       <div id="loading-bar" style="width:0%; height:100%; background:linear-gradient(90deg,#ff3b30,#ff9d14); transition:width .25s ease;"></div>
     </div>
@@ -53,35 +52,23 @@
   </div>
 
   <!-- Start screen -->
-  <div id="start-screen" class="screen" style="display:none; background: linear-gradient(180deg, rgba(8,12,17,.88) 0%, rgba(8,12,17,.62) 45%, rgba(8,12,17,.92) 100%);">
+  <div id="start-screen" class="screen" style="display:none; background: linear-gradient(180deg, rgba(8,12,17,.55) 0%, rgba(8,12,17,.30) 45%, rgba(8,12,17,.80) 100%);">
     <div class="start-inner">
-      <div class="start-kicker">3D ARCADE RACER</div>
-      <h1 class="start-title">APEX<span> CIRCUIT</span></h1>
-      <p class="start-sub">3 laps &middot; 3 checkpoints per lap &middot; beat your best time</p>
-      <button id="start-button" class="start-btn" type="button">TAP / PRESS ANY KEY TO START</button>
+      <div class="start-kicker">ENDLESS PROCEDURAL DRIVING</div>
+      <h1 class="start-title">APEX<span> ROADS</span></h1>
+      <p class="start-sub">
+        An infinite road, generated as you drive &middot; real tire physics,
+        weight transfer &amp; drifts
+      </p>
+      <button id="start-button" class="start-btn" type="button">TAP / PRESS ANY KEY TO DRIVE</button>
       <button id="install-button" class="install-btn" type="button" style="display:none;">⤓ INSTALL GAME ON DEVICE</button>
       <button id="download-button" class="install-btn" type="button" style="display:none;">PRE-DOWNLOAD GAME TO DEVICE</button>
       <div class="start-controls">
         <div><b>Drive</b> W A S D or Arrow keys &nbsp;&middot;&nbsp; <b>Handbrake</b> Space</div>
-        <div><b>Gears (manual)</b> Q / E &nbsp;&middot;&nbsp; <b>Camera</b> V &nbsp;&middot;&nbsp; <b>Transmission</b> M &nbsp;&middot;&nbsp; <b>Reset</b> R &nbsp;&middot;&nbsp; <b>Settings</b> Esc</div>
-        <div>On touch devices use the on-screen controls</div>
+        <div><b>Gears (manual)</b> Q / E &nbsp;&middot;&nbsp; <b>Camera</b> V &nbsp;&middot;&nbsp; <b>Transmission</b> M</div>
+        <div><b>Recenter</b> R &nbsp;&middot;&nbsp; <b>New road</b> N &nbsp;&middot;&nbsp; <b>Settings</b> Esc &nbsp;&middot;&nbsp; On touch devices use the on-screen controls</div>
       </div>
-      <div id="start-best" class="start-best" style="display:none;"></div>
-    </div>
-  </div>
-
-  <!-- Finish screen -->
-  <div id="finish-screen" class="screen" style="display:none;">
-    <div class="finish-panel">
-      <div class="finish-kicker">CHECKERED FLAG</div>
-      <h2 class="finish-title">FINISH!</h2>
-      <div id="finish-newbest" class="finish-newbest" style="display:none;">NEW BEST LAP!</div>
-      <div class="finish-stats">
-        <div class="finish-stat main"><span>Total time</span><b id="finish-total">--:--.---</b></div>
-        <div class="finish-stat"><span>Best lap</span><b id="finish-best">--:--.---</b></div>
-      </div>
-      <div id="finish-laps" class="finish-laps"></div>
-      <button id="restart-button" class="start-btn" type="button">RACE AGAIN</button>
+      <div id="start-seed" class="start-best" style="display:none;"></div>
     </div>
   </div>
 
