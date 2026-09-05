@@ -23,6 +23,7 @@ export class Interior {
     this.car = car;
     this.steeringWheel = null;      // the mesh/group that rotates
     this.steeringPivot = null;      // the pivot group at the wheel center
+    this.steeringColumnAxis = 'z';  // auto-detected: 'x', 'y', or 'z'
     this.cockpitAnchor = null;      // camera anchor at driver's head
     this.clusterGroup = null;       // instrument cluster group
     this.needleRPM = null;          // 3D rpm needle pivot
@@ -55,60 +56,110 @@ export class Interior {
    * its subtree under a pivot group that we can rotate.
    */
   _findAndRigSteeringWheel(scene) {
-    // find the STEER_LR node (left-hand drive steering wheel assembly)
+    // ---- find the STEER_LR node (left-hand drive steering wheel assembly) ----
     let steerNode = null;
     scene.traverse((o) => {
       if (!steerNode && o.name && o.name.toUpperCase().includes('STEER_LR')) {
         steerNode = o;
       }
     });
-
     if (!steerNode) {
-      // fallback: try STEER_HR (some exports only have one)
+      // fallback: any STEER_ node
       scene.traverse((o) => {
         if (!steerNode && o.name && o.name.toUpperCase().startsWith('STEER_')) {
           steerNode = o;
         }
       });
     }
-
     if (!steerNode) {
-      console.warn('[Interior] Steering wheel node not found. Steering wheel will not rotate.');
+      console.warn('[Interior] Steering wheel node not found.');
       return;
     }
+    console.log(`[Interior] Found steering wheel node: ${steerNode.name}`);
 
-    console.log(`[Interior] Found steering wheel: ${steerNode.name}`);
-
-    // compute the steering wheel's world position (the pivot point)
+    // ---- force-update the transform chain so matrixWorld is valid ----
     scene.updateMatrixWorld(true);
-    const wheelWorldPos = new THREE.Vector3();
-    steerNode.getWorldPosition(wheelWorldPos);
-    console.log(`[Interior] Steering wheel world pos: (${wheelWorldPos.x.toFixed(2)}, ${wheelWorldPos.y.toFixed(2)}, ${wheelWorldPos.z.toFixed(2)})`);
 
-    // create a pivot group at the steering wheel's position
+    // ---- find the actual wheel MESH (the round part) inside the steerNode ----
+    // The STEER_LR node is a group containing multiple child meshes (rim,
+    // spokes, hub, airbag, etc). We need to find the largest mesh and use
+    // its bbox to determine the wheel's actual center + orientation.
+    let wheelMesh = null;
+    let wheelMeshVolume = 0;
+    steerNode.traverse((o) => {
+      if (!o.isMesh || !o.geometry) return;
+      o.geometry.computeBoundingBox();
+      const bb = o.geometry.boundingBox;
+      if (!bb) return;
+      const size = bb.getSize(new THREE.Vector3());
+      const vol = size.x * size.y * size.z;
+      if (vol > wheelMeshVolume) {
+        wheelMeshVolume = vol;
+        wheelMesh = o;
+      }
+    });
+
+    if (!wheelMesh) {
+      console.warn('[Interior] No mesh found under steering wheel node.');
+      return;
+    }
+    console.log(`[Interior] Wheel mesh: ${wheelMesh.name}`);
+
+    // ---- compute the wheel's WORLD-space bbox center + size ----
+    // This is the actual visible center of the steering wheel, which may
+    // differ from the node's origin.
+    const wheelWorldBBox = new THREE.Box3().setFromObject(wheelMesh);
+    const wheelCenter = wheelWorldBBox.getCenter(new THREE.Vector3());
+    const wheelSize = wheelWorldBBox.getSize(new THREE.Vector3());
+    console.log(`[Interior] Wheel world center: (${wheelCenter.x.toFixed(2)}, ${wheelCenter.y.toFixed(2)}, ${wheelCenter.z.toFixed(2)})`);
+    console.log(`[Interior] Wheel world size: (${wheelSize.x.toFixed(2)}, ${wheelSize.y.toFixed(2)}, ${wheelSize.z.toFixed(2)})`);
+
+    // ---- determine the rotation axis (the column axis) ----
+    // The steering wheel is a disc — the THINNEST dimension is the column
+    // axis (the axis the wheel spins around). For a typical steering wheel:
+    //   - X = thin (column points toward driver, roughly +X in Audi space)
+    //   - Y and Z = the wheel face (the disc)
+    // We find the thinnest axis and use it.
+    const sizeArr = [
+      { axis: 'x', val: wheelSize.x },
+      { axis: 'y', val: wheelSize.y },
+      { axis: 'z', val: wheelSize.z }
+    ].sort((a, b) => a.val - b.val);
+    const columnAxis = sizeArr[0].axis;
+    console.log(`[Interior] Column axis: ${columnAxis} (thinnest dim = ${sizeArr[0].val.toFixed(3)}m)`);
+
+    // ---- create a pivot group at the wheel's world center ----
     this.steeringPivot = new THREE.Group();
 
-    // convert world position to scene-local (steerNode's parent space)
-    // so we can place the pivot correctly
+    // convert the wheel center to scene-local space
     const sceneInv = new THREE.Matrix4().copy(scene.matrixWorld).invert();
-    const localPos = wheelWorldPos.clone().applyMatrix4(sceneInv);
-    this.steeringPivot.position.copy(localPos);
+    const localPivotPos = wheelCenter.clone().applyMatrix4(sceneInv);
+    this.steeringPivot.position.copy(localPivotPos);
 
-    // re-parent the steering wheel subtree under the pivot
+    // ---- re-parent the ENTIRE steerNode subtree under the pivot ----
+    // Keep the steerNode's local transform intact so the wheel stays where
+    // it was authored — the pivot's position handles the placement.
     const parent = steerNode.parent;
     if (parent) {
       parent.remove(steerNode);
-      // offset the steerNode so its origin sits at the pivot
-      steerNode.position.sub(localPos);
+      // position the steerNode so its world position is preserved relative
+      // to the new pivot. The steerNode's local position becomes its original
+      // world position minus the pivot position (both in scene-local space).
+      const steerNodeWorldPos = new THREE.Vector3();
+      steerNode.getWorldPosition(steerNodeWorldPos);
+      const steerNodeLocalPos = steerNodeWorldPos.clone().applyMatrix4(sceneInv);
+      steerNode.position.copy(steerNodeLocalPos).sub(localPivotPos);
+      steerNode.quaternion.identity();  // the pivot will handle rotation
+      steerNode.scale.set(1, 1, 1);
       this.steeringPivot.add(steerNode);
       parent.add(this.steeringPivot);
     }
 
-    // the steering wheel rotates about its local Z axis (the column axis
-    // points toward the driver in the Audi's model space). We'll rotate
-    // the pivot's Z axis.
+    // store the column axis so update() rotates around the correct axis
+    this.steeringColumnAxis = columnAxis;
     this.steeringWheel = steerNode;
-    console.log('[Interior] Steering wheel rigged successfully');
+    console.log('[Interior] Steering wheel rigged. Pivot at scene-local:',
+      `(${localPivotPos.x.toFixed(2)}, ${localPivotPos.y.toFixed(2)}, ${localPivotPos.z.toFixed(2)})`);
   }
 
   // ----------------------------------------------------------- instrument cluster
@@ -305,9 +356,11 @@ export class Interior {
       // mapped to the visual steer angle (which is already damped in Car.js)
       const steerVisNorm = phys.steerAngle / 0.5;  // -1..1 approx
       const targetWheelRot = -steerVisNorm * Math.PI * 1.25;  // ±225° = ±2.5 turns / 2
-      this.steeringPivot.rotation.z = THREE.MathUtils.damp(
-        this.steeringPivot.rotation.z, targetWheelRot, 12, dt
+      const damped = THREE.MathUtils.damp(
+        this.steeringPivot.rotation[this.steeringColumnAxis], targetWheelRot, 12, dt
       );
+      // rotate around the column axis (auto-detected from the wheel's bbox)
+      this.steeringPivot.rotation[this.steeringColumnAxis] = damped;
     }
 
     // ---- instrument cluster (update at ~20 Hz) --------------------------
