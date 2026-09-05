@@ -20,7 +20,7 @@ import { CAR, TRANSMISSION as T } from './Constants.js';
 export const GEAR_LABEL = { '-1': 'R', '0': 'N' };
 
 /** sequential shift pattern: index into this list */
-const SEQ = ['R', 'N', '1', '2', '3', '4', '5', '6'];
+const SEQ = ['R', 'N', '1', '2', '3', '4', '5', '6', '7', '8'];
 
 /** shifter knob slot positions (x: -1 left..+1 right, z: 0 forward..1 back) */
 const SHIFTER_SLOTS = {
@@ -28,10 +28,12 @@ const SHIFTER_SLOTS = {
   N: [0, 0.45],
   1: [-1.0, 0.1],
   2: [-1.0, 0.9],
-  3: [0, 0.1],
-  4: [0, 0.9],
-  5: [1.0, 0.1],
-  6: [1.0, 0.9]
+  3: [-0.5, 0.1],
+  4: [-0.5, 0.9],
+  5: [0, 0.1],
+  6: [0, 0.9],
+  7: [0.5, 0.1],
+  8: [0.5, 0.9]
 };
 
 export class Transmission {

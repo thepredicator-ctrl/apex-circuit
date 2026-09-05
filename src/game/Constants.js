@@ -38,40 +38,40 @@ export const HEADLIGHTS = {
 };
 
 export const CAR = {
-  mass: 1180,               // kg
-  wheelbase: 2.96,          // m (Porsche 911 Carrera 4S)
-  cgHeight: 0.42,           // m — lower CG = less sliding, more planted
-  weightDistFront: 0.42,    // 911 is rear-engine ~42/58 F/R static load
-  wheelRadius: 0.34,        // m
+  mass: 2025,               // kg — Audi RS6 Avant (was 1180 for Porsche 911)
+  wheelbase: 2.93,          // m — RS6 wheelbase (was 2.96)
+  cgHeight: 0.50,           // m — taller car (wagon body) = higher CG
+  weightDistFront: 0.55,    // RS6 is nose-heavy ~55/45 F/R (was 0.42 for rear-engine 911)
+  wheelRadius: 0.365,       // m — RS6 22" wheels (was 0.34)
 
-  maxSpeed: 66,             // m/s (~238 km/h)
+  maxSpeed: 70,             // m/s (~250 km/h, limited)
   maxReverseSpeed: 11,
-  brakeDecel: 28,           // m/s^2 at full load — strong but progressive
+  brakeDecel: 28,           // m/s^2 at full load
   rollingResistance: 0.35,
   airDrag: 0.00042,
-  downforce: 1.6,           // * v^2 -> N — keeps the car planted at speed
+  downforce: 1.2,           // wagon body = less downforce than a low sports car
 
-  // lateral grip — tuned to feel planted at normal speeds, slide at the limit
-  gripAsphalt: 1.25,        // was 1.10 (too slidey); 1.25 = planted but breakable
+  // lateral grip — planted feel
+  gripAsphalt: 1.30,        // RS6 has wide performance tires
   gripGrass: 0.45,
-  handbrakeRearGrip: 0.28,  // was 0.30 — handbrake breaks loose more decisively
-  powerOversteerFactor: 0.78, // was 0.74 — slightly less aggressive (more controllable)
-  highSteerGripFactor: 0.86,  // was 0.82 — slightly more front grip at full lock
-  lateralDamp: 1.4,         // was 2.0 — slides settle FASTER (less drifty, more planted)
-  yawDamping: 7.0,          // was 6.0 — slightly more damped (less twitchy)
+  handbrakeRearGrip: 0.28,
+  powerOversteerFactor: 0.82, // AWD = less power oversteer than RWD 911
+  highSteerGripFactor: 0.88,
+  lateralDamp: 1.4,
+  yawDamping: 7.0,
 
-  // yaw rate limits
-  maxYawLowSpeed: 1.85,     // was 2.0 — slightly less rotation for stability
-  yawGripMultiplier: 0.96,  // was 0.92 — closer to grip circle (more responsive but safe)
+  // yaw rate limits — RS6 is heavier, turns less sharply than a 911
+  maxYawLowSpeed: 1.75,     // was 1.85 — slightly less rotation for the heavier car
+  yawGripMultiplier: 0.98,  // was 0.96 — more responsive (AWD helps rotation)
   minSteerSpeed: 1.4,
 
   grassDrag: 6.5,
 
   // collision
   wallOffset: 3.4,
-  carHalfWidth: 0.95,
-  wallBounce: 0.20,         // was 0.25 — less bouncy (more planted after hits)
-  wallSpeedScrub: 0.82      // was 0.86 — slightly more speed loss on wall scrape
+  carHalfWidth: 0.98,       // RS6 is wider (1.95m vs 1.85m for 911)
+  wallBounce: 0.20,
+  wallSpeedScrub: 0.82
 };
 
 /**
@@ -80,24 +80,24 @@ export const CAR = {
  * rpm = vF / wheelRadius * gearRatio * finalDrive * 60 / (2 pi)
  */
 export const TRANSMISSION = {
-  idleRpm: 900,
-  redline: 7600,
-  rpmMaxSafe: 8000,        // hard cut
-  peakTorqueRpm: 5300,
-  maxTorque: 420,          // Nm at the crank
-  efficiency: 0.9,         // drivetrain
-  gearRatios: [3.55, 2.36, 1.85, 1.47, 1.2, 0.99], // 1..6
-  reverseRatio: 3.2,
-  finalDrive: 3.7,
+  idleRpm: 700,
+  redline: 6800,           // RS6 V8 redline (~6800 rpm)
+  rpmMaxSafe: 7200,
+  peakTorqueRpm: 3500,     // twin-turbo V8 peaks low
+  maxTorque: 800,          // Nm — RS6 4.0TT V8 (was 420 for Porsche flat-six)
+  efficiency: 0.92,        // AWD drivetrain
+  gearRatios: [4.71, 3.14, 2.31, 1.81, 1.46, 1.23, 1.02, 0.84], // 8-speed ZF
+  reverseRatio: 3.32,
+  finalDrive: 3.56,
 
-  autoUpshiftRpm: 7150,
-  autoDownshiftRpm: 2450,
-  autoDownshiftThrottle: 0.65, // kickdown below this shifts earlier (rpm<5k)
-  shiftTime: 0.22,         // s of torque cut between gears
-  shiftRpmEase: 9,         // rpm blend speed during a shift
-  clutchLockSpeed: 5.5,    // m/s below which the clutch slips on launch
-  clutchGrip: 34,          // max launch force m/s^2 while slipping
-  stallRpm: 500            // below this in-gear with clutch locked => slip too
+  autoUpshiftRpm: 6400,
+  autoDownshiftRpm: 2200,
+  autoDownshiftThrottle: 0.65,
+  shiftTime: 0.18,         // ZF 8-speed shifts fast
+  shiftRpmEase: 9,
+  clutchLockSpeed: 5.5,
+  clutchGrip: 38,          // more clutch capacity for the heavier car
+  stallRpm: 500
 };
 
 export const SUSPENSION = {

@@ -258,14 +258,12 @@ export class VehiclePhysics {
 
     // --- steering / yaw ------------------------------------------------------------
     // Speed-sensitive steering: at low speed you get full lock for tight
-    // parking-lot turns; at high speed the steering ramps DOWN so the car
-    // stays planted and doesn't snap into a slide. This is what real cars do
-    // (and what the previous code did poorly — it gave too much yaw at speed
-    // which caused the constant sliding).
+    // parking-lot turns; at high speed the steering ramps down GENTLY so the
+    // car stays stable but can still corner. The previous version dropped to
+    // 35% at 35 m/s which was way too aggressive — the car couldn't turn at
+    // highway speeds. Now ramps from 100% to 65% over 0-50 m/s.
     const speedSteerFade = Math.min(1, vAbs / CAR.minSteerSpeed);
-    // Steering angle ramps from full at low speed to ~30% at high speed.
-    // The previous code used a flat steer input which over-rotated at speed.
-    const speedSteerScale = THREE.MathUtils.lerp(1.0, 0.35, Math.min(1, vAbs / 35));
+    const speedSteerScale = THREE.MathUtils.lerp(1.0, 0.65, Math.min(1, vAbs / 50));
     const effectiveSteer = steer * speedSteerScale;
 
     const yawKinematic = yawGrip * CAR.yawGripMultiplier / Math.max(vAbs, 5);

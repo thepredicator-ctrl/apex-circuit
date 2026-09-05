@@ -185,34 +185,22 @@ export class Game {
       this.assets = new AssetManager();
 
       // ---- car (uses the existing car.build which loads porsche_911.glb) ----
-      progress(0.02, 'LOADING PORSCHE 911…');
-      await this.car.build((t) => progress(0.02 + t * 0.30, 'LOADING PORSCHE 911…'));
+      progress(0.02, 'LOADING AUDI RS6…');
+      await this.car.build((t) => progress(0.02 + t * 0.60, 'LOADING AUDI RS6…'));
 
-      // ---- new track GLB (the visible racing surface) --------------------
-      // The procedural Track.js still owns the physics spline (collision,
-      // checkpoints, surface height). The GLB track is purely visual —
-      // placed on top of the procedural surface.
-      progress(0.35, 'LOADING RACE TRACK…');
-      try {
-        const trackScene = await this.assets.load('track',
-          (t) => progress(0.35 + t * 0.35, 'LOADING RACE TRACK…'));
-        // clone so we can re-position without affecting the cached original
-        const trackMesh = trackScene.clone(true);
-        // The track GLB's bounding box is ~487 x 12 x 380 m, centered near
-        // origin but offset. We place it so the track sits at world y=0
-        // (the procedural surface is also at y≈0). The GLB's min Y is -1.0
-        // so we lift it by 1.0 to put the road surface at y=0.
-        trackMesh.position.y = 1.0;
-        // The track's forward direction matches the procedural track's
-        // forward (we verified the layout is similar). No rotation needed.
-        trackMesh.rotation.y = 0;
-        this.scene.add(trackMesh);
-        this.trackGLB = trackMesh;
-        // hide the procedural road/runoff/ground — the GLB track replaces them
-        this.track.hideProceduralSurface();
-      } catch (err) {
-        console.warn('[ApexCircuit] Track GLB failed, using procedural track only:', err);
-      }
+      // ---- track: use the PROCEDURAL track (physics-aligned) -------------
+      // The GLB track (drift_race_track_free.glb) has a completely different
+      // layout from the procedural Track.js spline that drives physics. Using
+      // both at once means the car drives on an invisible road while the
+      // visible GLB track is elsewhere — which looks broken.
+      //
+      // For now we use ONLY the procedural track (which the car physics is
+      // aligned with). The GLB track can be integrated later by extracting
+      // its centerline and rebuilding the physics spline to match.
+      //
+      // The procedural track already has: asphalt, curbs, walls, tire stacks,
+      // signs, fences, trees, grandstands, start/finish gantry, etc.
+      progress(0.35, 'BUILDING TRACK…');
 
       // ---- environment: trees + bushes (instanced) -----------------------
       progress(0.72, 'PLANTING THE FOREST…');
@@ -275,7 +263,7 @@ export class Game {
       const dist = half + 8 + rnd() * 40;  // 8-48 m from centerline
       const x = this.track.px[idx] + this.track.rightX[idx] * dist * side;
       const z = this.track.pz[idx] + this.track.rightZ[idx] * dist * side;
-      treePositions.push({ x, z, scale: 0.6 + rnd() * 0.6, rot: rnd() * Math.PI * 2 });
+      treePositions.push({ x, z, scale: 0.25 + rnd() * 0.35, rot: rnd() * Math.PI * 2 });
     }
 
     // ---- bush positions: denser, closer to the track --------------------
@@ -627,7 +615,7 @@ export class Game {
       rpm: this.transmission.rpm,
       rpmNorm: this.transmission.rpmNorm,
       throttle: this.phys.throttleOut,
-      speedN: Math.min(1, Math.abs(this.phys.vF) / 66),
+      speedN: Math.min(1, Math.abs(this.phys.vF) / CAR.maxSpeed),
       slip: this.phys.slip,
       onGrass: this.phys.onGrass,
       onCurb: this.phys.onCurb,
@@ -767,7 +755,7 @@ export class Game {
       let err = desired - p.heading;
       while (err > Math.PI) err -= 2 * Math.PI;
       while (err < -Math.PI) err += 2 * Math.PI;
-      const speedN = Math.min(1, Math.abs(p.vF) / 60);
+      const speedN = Math.min(1, Math.abs(p.vF) / CAR.maxSpeed);
       const steer = Math.max(-1, Math.min(1, -err * (2.9 - 1.5 * speedN)));
       const throttle = p.vF < vT ? 1 : 0;
       const brake = p.vF > vT * 1.08 ? 1 : 0;
