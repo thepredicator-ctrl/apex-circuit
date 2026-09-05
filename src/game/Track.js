@@ -61,13 +61,17 @@ export class Track {
     this.group = new THREE.Group();
     this.roadHalfWidth = ROAD_WIDTH / 2;
     this.sampleCount = 200;     // sampled for physics (not really used for the grid)
-    this.startS = 0;
+    // startS + totalLength are plain properties (NOT getters) so they can
+    // be assigned in the constructor without "read only property" errors.
+    this._startS = 0;
+    this._totalLength = CELL * GRID_W;
 
     // sample arrays (kept for Physics compatibility, though the city is a grid)
     this.px = []; this.pz = []; this.py = [];
     this.rightX = []; this.rightZ = [];
     this.tanX = []; this.tanZ = [];
-    this.curv = []; this.bank = [];
+    this._curv = new Array(this.sampleCount).fill(0);
+    this.bank = [];
     this.curbFlag = [];
 
     this._buildTextures(maxAnisotropy);
@@ -520,13 +524,16 @@ export class Track {
     return new THREE.Vector3(0, 0, 1);
   }
 
-  get startS() { return 0; }
-  get totalLength() { return CELL * GRID_W; }
+  /** plain properties (not getters) — assignable in the constructor */
+  get startS() { return this._startS; }
+  set startS(v) { this._startS = v; }
+  get totalLength() { return this._totalLength; }
+  set totalLength(v) { this._totalLength = v; }
 
   /** not used in city mode but kept for compat */
   hideProceduralSurface() {}
   buildTrees() {}
 
-  get curv() { return this._curv || new Array(this.sampleCount).fill(0); }
+  get curv() { return this._curv; }
   set curv(v) { this._curv = v; }
 }
