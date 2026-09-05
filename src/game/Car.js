@@ -1,25 +1,29 @@
 /**
- * Car — Porsche 911 Carrera 4S (Karol Miklas, CC-BY-SA-4.0), rigged for the
- * game. The exterior comes from `public/models/porsche_911.glb`; the merged
- * axle meshes are split into four independent wheels so every corner can
- * spin, steer and travel on its suspension like the real car.
+ * Car — Audi RS6 GT Avant, rigged for the game.
  *
- * Model space: nose +X (wrapped -90° about Y so the nose points at +Z world).
- * `body` carries everything and receives suspension roll/pitch/bounce.
+ * The model comes from a Sketchfab export (vecarz.com) with 271 meshes,
+ * 44 materials, and 293k triangles. The wheels are separate meshes (not
+ * merged axles like the old Porsche), so we find them by material name
+ * ("tire") and rig each one individually.
  *
- * The glTF scene is authored nose +Z, so it is mounted inside `body` with a
- * +90° Y wrap. Wheel rigs are built in the glTF scene's own frame (axle = X,
- * up = Y, nose = +Z): spin about X, steer about Y, suspension along Y.
+ * Model space: the Audi GLB is authored with forward = +X, up = +Z
+ * (Sketchfab FBX convention). We wrap it -90° about Y so forward = +Z
+ * world (matching the game's convention). After the wrap:
+ *   - forward = +Z (world)
+ *   - up = +Y (world)
+ *   - right = +X (world)
+ *   - axle = X (wheel spin axis)
  *
- * Extras rigged on top of the model: physically-based headlight spotlights +
- * additive lens halos, brake-reactive rear light bar, clearcoat paint presets
- * (see PAINTS) and upgraded glass/chrome/rubber materials.
+ * The model is already in meters (tire diameter ~0.73m ≈ real RS6 22"
+ * wheels). No scale correction needed.
  *
- * NOTE: the Interior GLB (Jaguar XJ220 cockpit) is NO LONGER LOADED — the
- * interior view was removed in favor of a hood cam, and skipping the GLB
- * saves ~2 MB of bandwidth + a lot of GPU time on iPad. The fallback
- * cockpit anchor is kept (harmless) so any code referencing it doesn't
- * crash, but the camera rig no longer reads it.
+ * Wheel rigging:
+ *   - Each wheel mesh is found by scanning for materials named "tire".
+ *   - The mesh's world-space center (from its bounding box) determines
+ *     whether it's front/rear and left/right.
+ *   - Each wheel is re-parented under: steerGroup → suspGroup → spinGroup
+ *     so front wheels can steer, all wheels can spin, and suspension
+ *     travels independently per wheel.
  */
 
 import * as THREE from 'three';
@@ -29,7 +33,7 @@ import { loadGLB, toFloat32Geometry, keepTriangles, stripExtras } from './ModelK
 export class Car {
   constructor(track = null) {
     this.track = track;
-    this.ready = false;         // flips true once the GLBs are rigged
+    this.ready = false;
 
     this.group = new THREE.Group();      // world transform (position + heading)
     this.model = new THREE.Group();      // static wrap: nose +X -> +Z
@@ -39,10 +43,7 @@ export class Car {
     this.body = new THREE.Group();       // suspension roll/pitch/bounce
     this.model.add(this.body);
 
-    // ---- defensive cockpit anchor -----------------------------------------
-    // Kept for backwards-compat (HUD code references cockpitMode etc.) but
-    // the camera rig no longer reads this — the hood cam computes its own
-    // position from phys.position + heading.
+    // defensive cockpit anchor (kept for backwards-compat with HUD code)
     this.cockpitAnchor = new THREE.Object3D();
     this.cockpitAnchor.position.set(-0.05, 1.02, -0.33);
     this.body.add(this.cockpitAnchor);
@@ -61,25 +62,25 @@ export class Car {
     this._bodyYV = 0;
 
     this.cockpitMode = false;
+
+    // materials (built in _buildBaseMaterials)
+    this.mats = {};
   }
 
   /**
-   * Load + rig everything. Call once; resolves after the car is rigged and
-   * `ready` is true. The Interior GLB is intentionally NOT loaded — the
-   * hood camera doesn't need it, and skipping it saves bandwidth + GPU.
+   * Load + rig the Audi RS6. Call once; resolves after the car is rigged
+   * and `ready` is true.
    */
   async build(onProgress) {
-    // car is now the entire load (no interior GLB)
-    const carScene = await loadGLB('./models/porsche_911.glb',
+    const carScene = await loadGLB('./models/audi_rs6.glb',
       (t) => onProgress && onProgress(t));
 
     this._buildBaseMaterials();
     this._prepareExterior(carScene);
-    this._rigWheels(carScene);
+    this._rigWheelsFromMaterials(carScene);
     this._buildLights();
 
-    // skip the Interior GLB entirely — the hood cam doesn't need it.
-    // Build a minimal fallback cockpit anchor so old code paths don't crash.
+    // fallback cockpit anchor (the hood cam doesn't need a real interior)
     this._buildFallbackCockpit();
 
     this.ready = true;
@@ -137,8 +138,10 @@ export class Car {
   setPaint(key) {
     const p = PAINTS[key] || PAINTS.guardsRed;
     this.paintKey = key in PAINTS ? key : 'guardsRed';
+    // Note: the Audi model has its own materials, so setPaint only affects
+    // the fallback paint material. The Audi's body material is kept as-is
+    // from the GLB.
     this.mats.paint.color.setHex(p.color);
-    // flake sparkle: metalness/roughness shift per paint family
     const dark = (p.color >> 16 & 255) + (p.color >> 8 & 255) + (p.color & 255) < 180;
     this.mats.paint.metalness = dark ? 0.55 : 0.78;
     this.mats.paint.roughness = dark ? 0.34 : 0.27;
@@ -146,124 +149,43 @@ export class Car {
 
   // ------------------------------------------------------------- exterior
   /**
-   * Mount the glTF scene on the body, remove studio props, upgrade the
-   * model's materials to game-quality PBR.
+   * Mount the glTF scene on the body. The Audi model already has good
+   * materials (44 PBR materials with textures), so we keep them as-is.
+   * We only strip lights/cameras from the FBX export and enable shadows.
    */
   _prepareExterior(scene) {
     stripExtras(scene);
 
-    // remove studio props: paint buckets, backdrop cube + hemi gizmo shells
-    const PROP_EXACT = new Set(['Plane', 'Plane002', 'Plane003', 'Plane004', 'Cube001']);
-    const PROP_PREFIX = ['Hemi', 'Cube001', 'Plane002', 'Plane003', 'Plane004'];
-    const doomed = [];
+    // enable shadows on all meshes
     scene.traverse((o) => {
-      const n = o.name;
-      if (PROP_EXACT.has(n) || PROP_PREFIX.some((p) => n.startsWith(p))) doomed.push(o);
-    });
-    for (const o of doomed) o.parent && o.parent.remove(o);
-
-    // material upgrades by the author's material names
-    let tailBar = null;
-    scene.traverse((o) => {
-      if (!o.isMesh) return;
-      o.castShadow = true;
-      o.receiveShadow = false;
-      const m = o.material;
-      if (!m) return;
-      const name = m.name || '';
-      if (name === 'paint') {
-        o.material = this.mats.paint;
-      } else if (name === 'coat') {
-        // the author's clearcoat shell — keep it subtle
-        if (!this.mats.coat) {
-          this.mats.coat = new THREE.MeshPhysicalMaterial({
-            color: 0x0b0d10, metalness: 0.9, roughness: 0.05,
-            transparent: true, opacity: 0.16, envMapIntensity: 2.2,
-            depthWrite: false
-          });
-        }
-        o.material = this.mats.coat;
-        o.castShadow = false;
-      } else if (name === 'window') {
-        o.material = this.mats.glassDark;
-        o.castShadow = false;
-      } else if (name === 'glass') {
-        o.material = this.mats.glassDark;
-        o.castShadow = false;
-      } else if (name === 'lights') {
-        if (!this.mats.headlightLens) {
-          this.mats.headlightLens = new THREE.MeshStandardMaterial({
-            color: 0xd8e4f0, emissive: 0xcfe4ff, emissiveIntensity: 2.6,
-            metalness: 0.2, roughness: 0.18, envMapIntensity: 1.4
-          });
-        }
-        o.material = this.mats.headlightLens;
-      } else if (name === 'rubber') {
-        if (!this.mats.tire) {
-          this.mats.tire = new THREE.MeshStandardMaterial({
-            color: 0x151515, roughness: 0.96, metalness: 0.0
-          });
-          this.mats.tire.name = 'rubber';
-        }
-        o.material = this.mats.tire;
-      } else if (name === 'silver') {
-        o.material = this.mats.chrome;
-      } else if (name === 'plastic') {
-        o.material = this.mats.blackMatte;
-      } else if (name === 'full_black') {
-        o.material = this.mats.blackGloss;
-      } else if (name === 'Material.001') {
-        // brake calipers — racing orange, faint glow under the moonlight
-        if (!this.mats.caliper) {
-          this.mats.caliper = new THREE.MeshStandardMaterial({
-            color: 0xd8480f, metalness: 0.35, roughness: 0.42,
-            emissive: 0x551602, emissiveIntensity: 0.7
-          });
-          this.mats.caliper.name = 'Material.001';
-        }
-        o.material = this.mats.caliper;
-      } else if (name === 'tex_shiny' && o.name.startsWith('boot003')) {
-        // rear light bar — brake reactive
-        if (!this.mats.tailBar) {
-          this.mats.tailBar = new THREE.MeshStandardMaterial({
-            color: 0x30040a, emissive: 0xff1a1a, emissiveIntensity: 1.5,
-            roughness: 0.3, metalness: 0.2
-          });
-        }
-        o.material = this.mats.tailBar;
-        tailBar = this.mats.tailBar;
+      if (o.isMesh) {
+        o.castShadow = true;
+        o.receiveShadow = false;
       }
     });
 
-    // wheel-well liners are added by _rigWheels once the wheel centers are known
-
-    // mount: glTF nose +Z -> model space nose +X
+    // The Audi GLB is authored nose +X. Mount it so nose -> +Z world.
     scene.rotation.y = Math.PI / 2;
-    // raise so the tires rest on y = 0. The lift is computed from the actual
-    // wheel radius (measured in _rigWheels from the tire bbox) so the wheels
-    // always sit on the ground regardless of model scale. We set a placeholder
-    // here and let _rigWheels update scene.position.y once it measures the
-    // true radius. (The old hardcoded 0.565 was tuned for one specific model
-    // scale and left wheels floating when the radius was different.)
-    this._pendingLift = null;
+
+    // The model is already in meters (tire diameter ~0.73m). No scale needed.
+    // The scene's Y position will be set by _rigWheelsFromMaterials after
+    // measuring the wheel positions so the tires rest on y=0.
+    this._pendingLift = 0;
     scene.position.y = 0;
     this.carRoot = scene;
     this.body.add(scene);
-
-    this.tailBarMat = tailBar;
   }
-
-  /** Dark liner half-cylinders behind each wheel (visual polish). — built in _rigWheels */
 
   // ---------------------------------------------------------- headlights
   _buildLights() {
-    // real spotlights down the road (no shadows — cheap)
+    // Real spotlights down the road (no shadows — cheap)
     const mk = (z) => {
       const light = new THREE.SpotLight(
         HEADLIGHTS.color, HEADLIGHTS.intensity,
         HEADLIGHTS.distance, HEADLIGHTS.angle, HEADLIGHTS.penumbra, HEADLIGHTS.decay
       );
-      light.position.set(1.95, 0.52, z);
+      // RS6 headlight positions (approximate, in body space after the +90° Y wrap)
+      light.position.set(2.2, 0.6, z);
       light.castShadow = false;
       const target = new THREE.Object3D();
       target.position.set(34, -1.5, z * 1.4);
@@ -272,8 +194,8 @@ export class Car {
       light.target = target;
       return light;
     };
-    this.headlightL = mk(0.55);
-    this.headlightR = mk(-0.55);
+    this.headlightL = mk(0.75);
+    this.headlightR = mk(-0.75);
 
     // lens halos (fake bloom)
     if (!this.mats.glowTex) {
@@ -293,9 +215,9 @@ export class Car {
       map: this.mats.glowTex, color: 0xeaf4ff, transparent: true, opacity: 0.75,
       blending: THREE.AdditiveBlending, depthWrite: false, toneMapped: false
     });
-    for (const z of [0.55, -0.55]) {
+    for (const z of [0.75, -0.75]) {
       const sp = new THREE.Sprite(headGlow);
-      sp.position.set(2.05, 0.5, z);
+      sp.position.set(2.3, 0.6, z);
       sp.scale.set(0.5, 0.3, 1);
       this.body.add(sp);
     }
@@ -305,163 +227,170 @@ export class Car {
       blending: THREE.AdditiveBlending, depthWrite: false, toneMapped: false
     });
     const tailSp = new THREE.Sprite(this.tailGlowMat);
-    tailSp.position.set(-2.12, 0.62, 0);
+    tailSp.position.set(-2.4, 0.7, 0);
     tailSp.scale.set(1.55, 0.4, 1);
     this.body.add(tailSp);
   }
 
   // -------------------------------------------------------------- wheels
   /**
-   * The model merges each axle's four wheels into two meshes (tire/rim/disc
-   * per material + caliper), both halves sharing one mesh per material.
-   * This splits every part down the x = 0 plane and builds proper per-wheel
-   * rigs: steer -> susp -> spin pivots at the true wheel centers.
+   * Find wheel meshes by material name and rig each one.
+   *
+   * The Audi model has 4 tire meshes (material name = "tire") + 4 brake/rim
+   * detail meshes (material name = "WHEEL"). We use the "tire" meshes as
+   * the primary wheels and attach the "WHEEL" meshes to the same spin group
+   * if they're close to a tire.
+   *
+   * Each tire mesh's world-space center (from its bounding box) determines
+   * its position: front/rear (Z axis) and left/right (X axis).
    */
-  _rigWheels(scene) {
-    const axles = { rear: null, front: null };
+  _rigWheelsFromMaterials(scene) {
+    // ---- find all meshes with "tire" material ---------------------------
+    const tireMeshes = [];
+    scene.updateMatrixWorld(true);
     scene.traverse((o) => {
-      if (o.isMesh) return;
-      if (o.name.startsWith('Cylinder000')) axles.rear = o;
-      else if (o.name.startsWith('Cylinder001')) axles.front = o;
+      if (!o.isMesh || !o.material) return;
+      const matName = (o.material.name || '').toLowerCase();
+      if (matName === 'tire' || matName.includes('tyre')) {
+        tireMeshes.push(o);
+      }
     });
 
-    const inv = new THREE.Matrix4();
-    scene.updateMatrixWorld(true);
-    inv.copy(scene.matrixWorld).invert();
-
-    this.wheelRadius = CAR.wheelRadius;
-
-    for (const [key, axle] of Object.entries(axles)) {
-      if (!axle) continue;
-      const meshes = [];
-      axle.updateMatrixWorld(true);
-      axle.traverse((o) => { if (o.isMesh) meshes.push(o); });
-
-      // find the tire mesh (rubber material) — its bbox gives us the true
-      // wheel hub + radius. We use the BBOX CENTER (not the node origin)
-      // because some FBX pipelines offset the tire geometry inside the mesh
-      // node, so the node origin sits on the axle pivot but the visible
-      // wheel center is elsewhere.
-      let tireMesh = null;
-      for (const o of meshes) {
-        if (o.material && o.material.name === 'rubber') tireMesh = o;
-      }
-
-      let measuredRadius = CAR.wheelRadius;
-      const centerLocal = new THREE.Vector3();
-      {
-        const g = toFloat32Geometry(tireMesh.geometry);
-        g.applyMatrix4(new THREE.Matrix4().multiplyMatrices(inv, tireMesh.matrixWorld));
-        g.computeBoundingBox();
-        const size = g.boundingBox.getSize(new THREE.Vector3());
-        // tire bbox: the wheel's circular cross-section lies in the Y-Z plane
-        // (axle along X). Diameter = max(size.y, size.z); radius = half.
-        measuredRadius = Math.max(0.2, Math.max(size.y, size.z) / 2);
-        // bbox center in scene-local space — this is the TRUE wheel hub
-        centerLocal.copy(g.boundingBox.min).add(g.boundingBox.max).multiplyScalar(0.5);
-        g.dispose();
-      }
-      // Use the FRONT axle's measured radius as the canonical one (front and
-      // rear should be the same on a 911, but if they differ the front is
-      // usually the larger one and we want the wheels to rest on the ground).
-      if (key === 'front' || !this.wheelRadius || this.wheelRadius === CAR.wheelRadius) {
-        this.wheelRadius = measuredRadius;
-      }
-
-      // ---- compute the scene lift so wheels rest on y = 0 -----------------
-      // The wheel pivot is at centerLocal.y in scene-local space (post-rotation).
-      // To put the wheel bottom (pivot.y - radius) at y = 0, the scene needs
-      // to be lifted by (radius - centerLocal.y). We pick the lowest axle
-      // (front OR rear, whichever has the smaller centerLocal.y - radius)
-      // so neither axle clips through the ground.
-      const axleBottom = centerLocal.y - measuredRadius;
-      const requiredLift = -axleBottom; // makes axleBottom + lift = 0
-      if (this._pendingLift === null || requiredLift > this._pendingLift) {
-        this._pendingLift = requiredLift;
-      }
-
-      for (const side of [1, -1]) {
-        const wheelRoot = new THREE.Group();
-        const steer = new THREE.Group();
-        const susp = new THREE.Group();
-        const spin = new THREE.Group();
-        wheelRoot.add(steer); steer.add(susp); susp.add(spin);
-
-        // split every part down the x = 0 plane (bake scene-space transforms)
-        const halves = [];
-        for (const mesh of meshes) {
-          const g = toFloat32Geometry(mesh.geometry);
-          g.applyMatrix4(new THREE.Matrix4().multiplyMatrices(inv, mesh.matrixWorld));
-          const pos = g.attributes.position;
-          const keep = new Array(pos.count);
-          for (let i = 0; i < pos.count; i++) keep[i] = (pos.getX(i) * side) > -0.001;
-          const g2 = keepTriangles(g, keep);
-          if (g2) halves.push({ geometry: g2, material: mesh.material, isCaliper: mesh.material.name === 'Material.001' });
-          g.dispose();
-        }
-
-        // wheel center x = centroid of this side's tire half
-        let xHalf = centerLocal.x;
-        const rub = halves.find((h) => h.material.name === 'rubber');
-        if (rub) {
-          rub.geometry.computeBoundingBox();
-          xHalf = (rub.geometry.boundingBox.min.x + rub.geometry.boundingBox.max.x) / 2;
-        }
-        wheelRoot.position.set(xHalf, centerLocal.y, centerLocal.z);
-
-        for (const h of halves) {
-          const mm = new THREE.Mesh(h.geometry, h.material);
-          mm.castShadow = true;
-          mm.position.set(-xHalf, -centerLocal.y, -centerLocal.z);
-          if (h.isCaliper) steer.add(mm);   // caliper steers, never spins
-          else spin.add(mm);
-        }
-
-        scene.add(wheelRoot);
-        this.wheels.push({
-          steerGroup: steer, suspGroup: susp, spinGroup: spin,
-          spinAxis: 'x',                     // glTF frame: axle along X
-          front: key === 'front',
-          side
-        });
-      }
-
-      axle.visible = false;
+    if (tireMeshes.length < 4) {
+      console.warn(`[Car] Found only ${tireMeshes.length} tire meshes (expected 4). ` +
+        'Wheel rigging may be incomplete.');
     }
 
-    // order wheels FL, FR, RL, RR to match phys.suspSmooth indices
+    // ---- compute each tire's world-space center + radius ----------------
+    const tireData = tireMeshes.map((mesh) => {
+      const g = toFloat32Geometry(mesh.geometry);
+      g.applyMatrix4(mesh.matrixWorld);  // bake world transform into geometry
+      g.computeBoundingBox();
+      const bb = g.boundingBox;
+      const center = bb.getCenter(new THREE.Vector3());
+      const size = bb.getSize(new THREE.Vector3());
+      // wheel diameter = max of the two non-axle dimensions
+      // (the axle is the narrowest dimension = wheel width)
+      const radius = Math.max(size.y, size.z) / 2;
+      g.dispose();
+      return { mesh, center, size, radius, worldMatrix: mesh.matrixWorld.clone() };
+    });
+
+    // ---- determine front/rear and left/right ----------------------------
+    // After the +90° Y wrap in _prepareExterior, the model's +X (original
+    // forward) becomes +Z (world forward). The wheel centers are in the
+    // scene's local space (pre-wrap), so +X = forward, +Y = up, +Z = right.
+    // We need to classify by the scene-local coordinates.
+    //
+    // Front vs rear: sort by X (forward axis in scene-local space)
+    // Left vs right: sort by Z (lateral axis in scene-local space)
+
+    // find the midpoints to split front/rear and left/right
+    const xs = tireData.map(t => t.center.x).sort((a, b) => a - b);
+    const zs = tireData.map(t => t.center.z).sort((a, b) => a - b);
+    const xMid = (xs[0] + xs[xs.length - 1]) / 2;
+    const zMid = (zs[0] + zs[zs.length - 1]) / 2;
+
+    // classify each tire
+    for (const t of tireData) {
+      t.front = t.center.x > xMid;   // +X = front (nose)
+      t.left = t.center.z > zMid;    // +Z = left (after wrap, this becomes -X = left)
+    }
+
+    // ---- measure the canonical wheel radius -----------------------------
+    // Use the average of all tire radii
+    this.wheelRadius = tireData.reduce((sum, t) => sum + t.radius, 0) / tireData.length;
+    if (!this.wheelRadius || this.wheelRadius < 0.1) {
+      this.wheelRadius = CAR.wheelRadius;
+    }
+
+    // ---- compute the scene lift so wheels rest on y=0 -------------------
+    // The lowest tire center Y minus its radius = the lowest wheel bottom.
+    // Lift = -(lowest bottom) so the wheel bottoms sit at y=0.
+    let lowestBottom = Infinity;
+    for (const t of tireData) {
+      const bottom = t.center.y - t.radius;
+      if (bottom < lowestBottom) lowestBottom = bottom;
+    }
+    this._pendingLift = -lowestBottom;
+    if (this.carRoot) this.carRoot.position.y = this._pendingLift;
+
+    // ---- rig each wheel: steer → susp → spin ----------------------------
+    for (const t of tireData) {
+      const wheelRoot = new THREE.Group();
+      const steer = new THREE.Group();
+      const susp = new THREE.Group();
+      const spin = new THREE.Group();
+      wheelRoot.add(steer); steer.add(susp); susp.add(spin);
+
+      // place the wheel root at the tire's world center
+      wheelRoot.position.copy(t.center);
+
+      // re-parent the tire mesh under the spin group, offsetting so the
+      // mesh's center sits at the spin group's origin
+      const meshWorldPos = new THREE.Vector3().setFromMatrixPosition(t.mesh.matrixWorld);
+      t.mesh.parent.remove(t.mesh);
+      spin.add(t.mesh);
+      // position the mesh so its geometry center is at the wheel root
+      t.mesh.position.copy(t.center).sub(meshWorldPos);
+      t.mesh.quaternion.identity();
+      t.mesh.scale.set(1, 1, 1);
+
+      scene.add(wheelRoot);
+
+      this.wheels.push({
+        steerGroup: steer,
+        suspGroup: susp,
+        spinGroup: spin,
+        spinAxis: 'x',       // axle along X in scene space
+        front: t.front,
+        side: t.left ? 1 : -1,
+        hubLocal: t.center.clone()
+      });
+    }
+
+    // ---- sort wheels FL, FR, RL, RR to match phys.suspSmooth indices ----
     this.wheels.sort((a, b) => (b.front - a.front) || (a.side - b.side));
 
-    // apply the computed scene lift so the wheels rest on y = 0
-    if (this._pendingLift !== null && this.carRoot) {
-      this.carRoot.position.y = this._pendingLift;
-    }
+    // ---- build wheel well liners (visual polish) ------------------------
+    this._buildWellLiners();
+  }
 
-    // well liners behind each wheel
+  /** Dark liner half-cylinders behind each wheel (visual polish). */
+  _buildWellLiners() {
     const liners = [];
     for (const w of this.wheels) {
-      const c = w.steerGroup.parent.position; // wheelRoot position (scene space)
+      const c = w.steerGroup.parent.position;
       const R = this.wheelRadius;
       const lg = new THREE.CylinderGeometry(R + 0.05, R + 0.05, 0.30, 14, 1, true, Math.PI / 2, Math.PI);
-      lg.rotateX(Math.PI / 2);              // axle along X in scene space
+      lg.rotateX(Math.PI / 2);
       lg.translate(c.x, c.y + 0.02, c.z);
       liners.push(toFloat32Geometry(lg));
     }
     if (liners.length) {
-      const merged = mergeGeometriesFloat(liners);
-      const linerMesh = new THREE.Mesh(merged, this.mats.well);
-      this.carRoot.add(linerMesh);
+      let merged;
+      try {
+        // merge geometries manually (simple concatenation of position arrays)
+        const totalVerts = liners.reduce((s, g) => s + g.attributes.position.count, 0);
+        const arr = new Float32Array(totalVerts * 3);
+        let o = 0;
+        for (const g of liners) {
+          arr.set(g.attributes.position.array, o);
+          o += g.attributes.position.array.length;
+        }
+        const mergedGeo = new THREE.BufferGeometry();
+        mergedGeo.setAttribute('position', new THREE.BufferAttribute(arr, 3));
+        mergedGeo.computeVertexNormals();
+        const linerMesh = new THREE.Mesh(mergedGeo, this.mats.well);
+        this.carRoot.add(linerMesh);
+      } catch (e) {
+        console.warn('[Car] Well liner merge failed:', e);
+      }
     }
   }
 
-  /** Minimal cockpit so the game stays playable if the interior GLB fails. */
+  /** Minimal cockpit so the game stays playable. */
   _buildFallbackCockpit() {
-    const box = new THREE.Mesh(
-      new THREE.BoxGeometry(0.5, 0.3, 1.3),
-      this.mats.blackGloss
-    );
-    box.position.set(0.75, 0.75, 0);
-    this.body.add(box);
     this.cockpitAnchor = new THREE.Object3D();
     this.cockpitAnchor.position.set(-0.05, 1.02, -0.33);
     this.body.add(this.cockpitAnchor);
@@ -481,7 +410,7 @@ export class Car {
    * @param {number} dt
    * @param {VehiclePhysics} phys
    * @param {Transmission} trans
-   * @param {RaceSystem} [race] — optional, feeds the Virtual Cockpit lap info
+   * @param {RaceSystem} [race]
    */
   updateVisual(dt, phys, trans, race = null) {
     if (!this.ready) return;
@@ -491,40 +420,25 @@ export class Car {
     this.group.rotation.y = phys.heading;
 
     // ---- wheels: spin (vF / true radius), steer, suspension travel --------
-    // Smooth, physically-correct wheel behavior:
-    //   - spin rate = vF / wheelRadius (the true rolling speed)
-    //   - under wheelspin, the driven (rear) wheels spin faster than vF/r
-    //   - steering is damped for smooth visual response (no snapping)
-    //   - suspension travel follows the physics compression targets
     const R = this.wheelRadius || CAR.wheelRadius;
-    // Base rolling spin rate for all four wheels
     let baseSpinRate = phys.vF / R;
-    // Driven wheels (rear on this RWD 911) get extra spin under wheelspin
-    // so the rear tires visually spin up while the fronts roll true.
     const rearSpinBoost = (phys.wheelspin && trans.gear > 0) ? 22 : 0;
     const rearSpinCut  = (trans.wheelspin && trans.gear < 0) ? -12 : 0;
     this._spinAngle -= baseSpinRate * dt;
 
-    // Steering: damped for smooth visual response. Higher damping constant
-    // = faster response. 14 gives quick but smooth steering.
     const steerTarget = -phys.steerAngle;
     this._steerVis = THREE.MathUtils.damp(this._steerVis, steerTarget, 14, dt);
 
     const susp = phys.suspSmooth;
     for (let i = 0; i < this.wheels.length; i++) {
       const w = this.wheels[i];
-      // Per-wheel spin: rear wheels get the wheelspin boost, fronts just roll
       let wheelSpin = this._spinAngle;
       if (!w.front) {
-        // rear (driven) wheels — add wheelspin visual
         wheelSpin -= (rearSpinBoost + rearSpinCut) * dt;
       }
       if (w.spinAxis === 'x') w.spinGroup.rotation.x = wheelSpin;
       else w.spinGroup.rotation.z = wheelSpin;
-      // Front wheels steer; rears don't
       if (w.front) w.steerGroup.rotation.y = this._steerVis;
-      // Suspension travel: clamp to a safe range so wheels never detach
-      // from the body or clip through the road.
       const travel = THREE.MathUtils.clamp(
         (susp[i] - 0.5) * 2 * SUSPENSION.travel,
         -SUSPENSION.travel * 0.9,
@@ -542,7 +456,6 @@ export class Car {
       (susp[2] + susp[3] - susp[0] - susp[1]) * 0.5 * SUSPENSION.accelPitch * 6,
       -SUSPENSION.maxPitch, SUSPENSION.maxPitch
     );
-    // model frame (nose +X): pitch about Z, roll about X
     this.body.rotation.z = THREE.MathUtils.damp(
       this.body.rotation.z, pitch + phys.roadPitch, 8, dt);
     this.body.rotation.x = THREE.MathUtils.damp(
@@ -561,68 +474,8 @@ export class Car {
     }
     this.body.position.y = THREE.MathUtils.clamp(bounceY, -0.1, 0.1);
 
-    // ---- steering wheel + shifter + pedals (interior rig) ------------------
-    const steerVisNorm = this._steerVis / 0.5;
-    if (this.steeringSpin) this.steeringSpin.rotation.z = -steerVisNorm * 2.4;
-    if (this.shifterGroup) {
-      this.shifterGroup.rotation.z = -trans.shifterX * 0.3;
-      this.shifterGroup.rotation.x = trans.shifterZ * 0.24;
-    }
-    if (this.pedalThrottle) this.pedalThrottle.rotation.z = -0.35 + phys.throttleOut * 0.25;
-    if (this.pedalBrake) this.pedalBrake.rotation.z = -0.35 + phys.brakeOut * 0.3;
-    if (this.handbrakeLever) {
-      this.handbrakeLever.rotation.z = phys.brakeOut > 0 && phys.vF < 1 ? 0.5 : 0.9;
-    }
-
     // ---- lights -------------------------------------------------------------
     const braking = phys.brakeOut > 0.15 && phys.vF > 0.4;
-    if (this.mats.tailBar) this.mats.tailBar.emissiveIntensity = braking ? 4.6 : 1.6;
     if (this.tailGlowMat) this.tailGlowMat.opacity = braking ? 0.75 : 0.26;
-
-    // ---- ambient light line: slow breathing pulse ----------------------------
-    if (this.mats.ambient) {
-      this.mats.ambient.emissiveIntensity = 1.5 + Math.sin(this._time * 2.1) * 0.35;
-    }
-
-    // ---- cockpit visibility -------------------------------------------------
-    if (this.helmet) this.helmet.visible = !this.cockpitMode && this.helmet.children.length > 0;
-    // in cockpit view the donor cabin shell is switched off — the rigged
-    // wheel, cluster and MMI are separate and stay; this keeps the sight line
-    // to the road clean
-    if (this.cabinGroup) this.cabinGroup.visible = !this.cockpitMode;
-
-    // ---- live Virtual Cockpit (~20 Hz) ----------------------------------------
-    this._clusterAcc += dt;
-    if (this._clusterAcc > 0.05) {
-      this._clusterAcc = 0;
-      if (this.drawCluster) {
-        this.drawCluster(this, trans.rpmNorm, phys.speedKmh, trans.gearLabel, trans.limiterCut, race);
-      }
-    }
-    // ---- MMI minimap (~4 Hz) ---------------------------------------------------
-    this._mmiAcc += dt;
-    if (this._mmiAcc > 0.25) {
-      this._mmiAcc = 0;
-      if (this.drawMMI) this.drawMMI(this, ((phys.s % 1) + 1) % 1);
-    }
   }
-}
-
-/** Merge plain float32 geometries (positions/normals/uvs must all exist or all not). */
-function mergeGeometriesFloat(geos) {
-  const out = new THREE.BufferGeometry();
-  const names = Object.keys(geos[0].attributes);
-  for (const name of names) {
-    const item = geos[0].attributes[name].itemSize;
-    let total = 0;
-    for (const g of geos) total += g.attributes[name].array.length;
-    const arr = new Float32Array(total);
-    let o = 0;
-    for (const g of geos) {
-      arr.set(g.attributes[name].array, o);
-      o += g.attributes[name].array.length;
-    }
-    out.setAttribute(name, new THREE.BufferAttribute(arr, item));
-  }
-  return out;
 }
