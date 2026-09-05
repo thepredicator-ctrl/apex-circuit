@@ -28,10 +28,10 @@ import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
  */
 export const ASSET_REGISTRY = {
   car: {
-    url: './models/porsche_911.glb',
-    scale: 1.0,
-    expectedSize: { x: 4.5, y: 1.3, z: 1.9 },  // 911 Carrera 4S: 4.5m L x 1.3m H x 1.9m W
-    description: 'Porsche 911 Carrera 4S (Karol Miklas, CC-BY-SA-4.0)'
+    url: './models/audi_rs6.glb',
+    scale: 1.0,                                  // already in meters (tire diameter ~0.73m)
+    expectedSize: { x: 5.0, y: 1.5, z: 1.95 },  // Audi RS6 Avant: ~5.0m L x 1.46m H x 1.95m W
+    description: 'Audi RS6 GT Avant (vecarz.com, Sketchfab)'
   },
   track: {
     url: './models/drift_race_track_free.glb',
