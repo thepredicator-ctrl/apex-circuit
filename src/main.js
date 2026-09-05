@@ -248,7 +248,7 @@ async function boot() {
             startScreen.style.display = '';
             const seedEl = $('start-seed');
             if (seedEl) {
-              seedEl.textContent = `ROAD SEED — ${game.journey.seed}`;
+              seedEl.textContent = `WORLD SEED — ${game.journey.seed}`;
               seedEl.style.display = '';
             }
           }
@@ -274,24 +274,66 @@ async function boot() {
 
 function wireStartScreen(game) {
   let started = false;
+  const hudRoot = document.getElementById('hud-root');
+  const settingsOpenOnMenu = () => !!(game.hud && game.hud.settingsOpen);
+
+  const toggleMenuSettings = () => {
+    if (!game.hud) return;
+    game.hud.toggleSettings();
+    const open = game.hud.settingsOpen;
+    if (hudRoot) {
+      hudRoot.classList.toggle('menu-mode', open);
+      hudRoot.style.display = open ? '' : 'none';
+    }
+  };
+
+  const panelEl = document.getElementById('settings-panel');
+  if (panelEl && typeof MutationObserver !== 'undefined') {
+    new MutationObserver(() => {
+      if (started || !game.hud) return;
+      const open = game.hud.settingsOpen;
+      hudRoot.classList.toggle('menu-mode', open);
+      hudRoot.style.display = open ? '' : 'none';
+    }).observe(panelEl, { attributes: true, attributeFilter: ['style'] });
+  }
+
   const begin = () => {
     if (started || fatalShown) return;
-    if (game.state === 'loading' || !game.car.ready) return;
+    if (game.state === 'loading' || !game.car || !game.car.ready) return;
+    if (settingsOpenOnMenu()) return;
     started = true;
     loadingScreen.style.display = 'none';
     startScreen.style.display = 'none';
+    if (hudRoot) hudRoot.classList.remove('menu-mode');
     game.startDriving();
   };
 
   const startBtn = $('start-button');
   if (startBtn) startBtn.addEventListener('click', begin);
-  startScreen.addEventListener('touchstart', begin, { passive: true });
+  const settingsBtn = $('menu-settings');
+  if (settingsBtn) {
+    settingsBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      toggleMenuSettings();
+    });
+  }
+  startScreen.addEventListener('touchstart', (e) => {
+    if (settingsOpenOnMenu()) return;
+    if (e.target === startScreen) begin();
+  }, { passive: true });
   window.addEventListener('keydown', function onKey(e) {
     if (started) {
       window.removeEventListener('keydown', onKey);
       return;
     }
     if (e.ctrlKey || e.metaKey || e.altKey) return;
+    if (e.code === 'Escape') {
+      e.preventDefault();
+      toggleMenuSettings();
+      return;
+    }
+    if (e.code === 'Tab') { e.preventDefault(); return; }
+    if (settingsOpenOnMenu()) return;
     begin();
   });
 }

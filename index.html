@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
   <meta name="theme-color" content="#0b0f14" />
-  <meta name="description" content="APEX ROADS — an endless procedurally generated driving game. An infinite road born as you drive, through rolling hills, farms and forests, with realistic tire physics, weight transfer and catchable drifts. Fully offline-installable PWA." />
+  <meta name="description" content="APEX ROADS — a seeded open-world driving game. Infinite procedural highways, cities, traffic and weather from a single world seed, with realistic tire physics. Fully offline-installable PWA." />
   <meta name="mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
@@ -19,7 +19,7 @@
   <link rel="apple-touch-icon" sizes="167x167" href="./icons/icon-192.png" />
   <link rel="apple-touch-icon" sizes="180x180" href="./icons/icon-512.png" />
   <link rel="icon" type="image/svg+xml" href="./favicon.svg" />
-  <title>APEX ROADS — Endless Procedural Driving</title>
+  <title>APEX ROADS — Open World Driving</title>
   <style>
     /* Critical loading styles inline so the loading screen looks right before JS/CSS arrive */
     html, body { margin: 0; padding: 0; background: #0b0f14; overflow: hidden; height: 100%; }
@@ -51,25 +51,18 @@
     <div id="download-state" style="margin-top:12px; font-size:11px; letter-spacing:2px; color:rgba(255,255,255,.45);"></div>
   </div>
 
-  <!-- Start screen -->
-  <div id="start-screen" class="screen" style="display:none; background: linear-gradient(180deg, rgba(8,12,17,.55) 0%, rgba(8,12,17,.30) 45%, rgba(8,12,17,.80) 100%);">
-    <div class="start-inner">
-      <div class="start-kicker">ENDLESS PROCEDURAL DRIVING</div>
-      <h1 class="start-title">APEX<span> ROADS</span></h1>
-      <p class="start-sub">
-        An infinite road, generated as you drive &middot; real tire physics,
-        weight transfer &amp; drifts
-      </p>
-      <button id="start-button" class="start-btn" type="button">TAP / PRESS ANY KEY TO DRIVE</button>
-      <button id="install-button" class="install-btn" type="button" style="display:none;">⤓ INSTALL GAME ON DEVICE</button>
-      <button id="download-button" class="install-btn" type="button" style="display:none;">PRE-DOWNLOAD GAME TO DEVICE</button>
-      <div class="start-controls">
-        <div><b>Drive</b> W A S D or Arrow keys &nbsp;&middot;&nbsp; <b>Handbrake</b> Space</div>
-        <div><b>Gears (manual)</b> Q / E &nbsp;&middot;&nbsp; <b>Camera</b> V &nbsp;&middot;&nbsp; <b>Transmission</b> M</div>
-        <div><b>Recenter</b> R &nbsp;&middot;&nbsp; <b>New road</b> N &nbsp;&middot;&nbsp; <b>Settings</b> Esc &nbsp;&middot;&nbsp; On touch devices use the on-screen controls</div>
-      </div>
-      <div id="start-seed" class="start-best" style="display:none;"></div>
+  <!-- Start screen — pure black, one flickering light, PLAY + SETTINGS -->
+  <div id="start-screen" class="screen menu-screen" style="display:none">
+    <div class="menu-lightbar" aria-hidden="true"></div>
+    <h1 class="menu-title">APEX ROADS</h1>
+    <div class="menu-lightbar menu-lightbar-low" aria-hidden="true"></div>
+    <div class="menu-actions">
+      <button id="start-button" class="menu-btn menu-btn-play" type="button">PLAY</button>
+      <button id="menu-settings" class="menu-btn" type="button">SETTINGS</button>
     </div>
+    <button id="install-button" class="install-btn" type="button" style="display:none; margin-top:18px;">⤓ INSTALL GAME ON DEVICE</button>
+    <button id="download-button" class="install-btn" type="button" style="display:none; margin-top:8px;">PRE-DOWNLOAD GAME TO DEVICE</button>
+    <div id="start-seed" class="start-best" style="display:none; margin-top:16px;"></div>
   </div>
 
   <!-- Error overlay -->

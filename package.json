@@ -1,9 +1,9 @@
 {
   "name": "apex-roads",
   "private": true,
-  "version": "2.0.0",
+  "version": "3.0.0",
   "type": "module",
-  "description": "APEX ROADS — an endless procedurally generated driving game (slowroads-style) built with Three.js and Vite: infinite seeded roads, streaming terrain and realistic tire physics.",
+  "description": "APEX ROADS — a seeded open-world driving game: infinite procedural highways, cities, traffic, weather and mysteries from a single world seed. Three.js + Vite PWA.",
   "keywords": [
     "driving",
     "game",
@@ -23,7 +23,8 @@
     "preview": "vite preview"
   },
   "dependencies": {
-    "three": "^0.182.0"
+    "three": "^0.182.0",
+    "socket.io-client": "^4.8.1"
   },
   "devDependencies": {
     "vite": "^7.1.9"

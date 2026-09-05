@@ -122,23 +122,24 @@ export const HEADLIGHTS = {
 };
 
 /**
- * Vehicle dynamics constants — a ~1420 kg RWD sports coupe.
+ * Vehicle dynamics constants — a ~2090 kg luxury performance sedan
+ * (Audi A8-derived: long wheelbase, quattro-style stability, huge brakes).
  *
  * Layout (bicycle model):
  *   a = CG -> front axle, b = CG -> rear axle, wheelbase L = a + b.
  *   Static front load fraction = b / L.
  */
 export const CAR = {
-  mass: 1420,               // kg
-  inertiaYaw: 2600,         // kg·m² (typical for this class)
-  wheelbase: 2.70,
-  aFront: 1.30,             // CG -> front axle  (FzF = m·g·b/L)
-  bRear: 1.40,              // CG -> rear axle   (FzR = m·g·a/L)
-  cgHeight: 0.50,           // m — drives longitudinal load transfer
-  weightDistFront: 0.52,    // = b/L (informational)
-  wheelRadius: 0.33,
-  trackWidth: 1.55,
-  carHalfWidth: 0.85,
+  mass: 2085,               // kg — full-size luxury sedan
+  inertiaYaw: 4250,         // kg·m² — long, heavy, stable
+  wheelbase: 3.00,
+  aFront: 1.42,             // CG -> front axle  (FzF = m·g·b/L)
+  bRear: 1.58,              // CG -> rear axle   (FzR = m·g·a/L)
+  cgHeight: 0.48,           // m — drives longitudinal load transfer
+  weightDistFront: 0.527,   // = b/L (informational)
+  wheelRadius: 0.36,
+  trackWidth: 1.68,
+  carHalfWidth: 0.975,
 
   // --- aerodynamics / resistances -----------------------------------------
   airDrag: 0.00042,         // F = airDrag · v²  (≈0.42 · 1/2 · ρ · CdA · sign conv)
@@ -176,8 +177,13 @@ export const CAR = {
   relaxLength: 0.68,
 
   // --- brakes ----------------------------------------------------------------
-  brakeMaxDecel: 12.5,      // m/s² at full pedal, before tire limits
-  brakeBiasFront: 0.62,     // front brake share
+  // Full-size sedans get enormous brakes. The ABS layer (see Physics.js)
+  // pumps each axle's pressure to just below the friction peak, so a panic
+  // stop is both SHORT and the car stays steerable — no more plowing.
+  brakeMaxDecel: 15.0,      // m/s² demanded at full pedal, before tire limits
+  brakeBiasFront: 0.64,     // front brake share
+  absPeakFrac: 0.88,        // ABS modulates each axle to this fraction of peak mu
+  absFlutterHz: 46,         // pressure-cycle frequency (the classic ABS shudder)
   handbrakeDecel: 7.0,      // rear lock decel contribution
   handbrakeRearGrip: 0.40,  // rear lateral mu multiplier while handbraking
 
@@ -189,7 +195,7 @@ export const CAR = {
   steerSpeedRate: 0.16,     // how quickly fade engages per m/s
 
   // --- powertrain ------------------------------------------------------------
-  maxSpeed: 68,             // m/s (~245 km/h theoretical top speed)
+  maxSpeed: 72,             // m/s (~260 km/h theoretical top speed)
   maxReverseSpeed: 11,
   maxYawLowSpeed: 2.6,      // rad/s cap for the low-speed kinematic blend
   minSteerSpeed: 1.2,       // kinematic blend zone (m/s) — parking maneuvers
@@ -200,30 +206,31 @@ export const CAR = {
 };
 
 /**
- * Transmission / engine — naturally aspirated 3.0L flat-six feel.
- * Torque curve, 6 ratios + reverse, clutch slip on launch, rev limiter,
- * engine braking, automatic + sequential manual modes.
+ * Transmission / engine — 4.0L twin-turbo V8 feel (A8 55 TFSI class):
+ * a mountain of low-end torque, relaxed redline, 8-speed automatic with
+ * smooth wide-ratio steps. Torque curve, 8 ratios + reverse, clutch slip
+ * on launch, rev limiter, engine braking, automatic + manual modes.
  */
 export const TRANSMISSION = {
-  idleRpm: 800,
-  redline: 7200,
-  rpmMaxSafe: 7500,
-  peakTorqueRpm: 4800,
-  maxTorque: 340,           // Nm — ~280 hp coupe
-  efficiency: 0.9,
-  gearRatios: [3.45, 2.10, 1.52, 1.16, 0.94, 0.78],  // 6-speed
-  reverseRatio: 3.6,
-  finalDrive: 3.64,
+  idleRpm: 720,
+  redline: 6600,
+  rpmMaxSafe: 6900,
+  peakTorqueRpm: 2100,      // twins spool early — torque plateau from ~1500
+  maxTorque: 600,           // Nm — ~460 hp
+  efficiency: 0.91,
+  gearRatios: [4.71, 3.02, 2.06, 1.60, 1.28, 1.04, 0.86, 0.68],  // 8-speed
+  reverseRatio: 4.5,
+  finalDrive: 3.31,
 
-  autoUpshiftRpm: 6700,
-  autoDownshiftRpm: 2300,
+  autoUpshiftRpm: 6100,
+  autoDownshiftRpm: 1750,
   autoDownshiftThrottle: 0.65,
-  shiftTime: 0.12,
+  shiftTime: 0.14,
   shiftRpmEase: 9,
-  clutchLockSpeed: 5.2,
+  clutchLockSpeed: 5.0,
   clutchGrip: 28,
-  clutchCapacityN: 10500,   // N at the contact patch while slipping
-  stallRpm: 550
+  clutchCapacityN: 13500,   // N at the contact patch while slipping
+  stallRpm: 520
 };
 
 export const SUSPENSION = {
@@ -246,12 +253,16 @@ export const TRACK = {
   chunkSamples: 32,         // 128 m per chunk
   chunksAhead: 11,          // ~1.4 km of road generated ahead
   chunksBehind: 2,
-  // scenery
-  treeDensity: 26,          // conifers per chunk (both sides combined)
-  tree2Density: 17,         // broadleaf trees per chunk
-  bushDensity: 14,
-  rockDensity: 6,
-  grassDensity: 90,         // grass tufts per chunk (near-road dressing)
+  // scenery — DENSE. Per 128 m chunk (both sides combined).
+  treeDensity: 72,          // conifers per chunk
+  tree2Density: 54,         // broadleaf trees per chunk
+  wallTreeDensity: 30,      // EXTRA near-road trees in forest zones (the wall)
+  bushDensity: 54,
+  rockDensity: 16,
+  grassDensity: 400,        // grass tufts per chunk (near-road dressing)
+  flowerDensity: 260,       // flower patches per chunk
+  fernDensity: 140,         // undergrowth ferns per chunk
+  logDensity: 3,            // fallen logs per chunk
   hayDensity: 3,            // hay bales per farm chunk
   postSpacing: 32,          // meters between reflector posts
   poleSpacing: 84,          // meters between power poles
@@ -265,9 +276,9 @@ export const CAMERA = {
   // --- chase ---------------------------------------------------------------
   fovBase: 62,
   fovSpeedBoost: 12,
-  distanceBase: 7.2,
-  distanceSpeed: 1.6,
-  heightBase: 2.7,
+  distanceBase: 8.2,        // the sedan is 5.2 m long — pull the camera back
+  distanceSpeed: 1.7,
+  heightBase: 2.85,
   heightSpeed: 0.5,
   posDamping: 7.0,
   lookDamping: 11.0,
@@ -310,7 +321,7 @@ export const QUALITY = {
     fogScale: 0.8,
     particles: 0.6,
     aniso: 4,
-    sceneryScale: 0.7
+    sceneryScale: 0.9
   },
   high: {
     label: 'HIGH',
@@ -327,25 +338,26 @@ export const QUALITY = {
 export const DEFAULT_SETTINGS = {
   transmission: 'auto',    // 'auto' | 'manual'
   camera: 'chase',         // 'chase' | 'hood' | 'cockpit'
-  quality: 'medium',       // 'low' | 'medium' | 'high'
+  quality: 'high',         // 'low' | 'medium' | 'high' — dense world needs it
   timeOfDay: 'day',        // 'dawn' | 'day' | 'dusk' | 'night'
   masterVolume: 0.9,
   engineVolume: 0.8,
   steerSensitivity: 1.0,
   cameraSmoothing: 1.0,
-  paint: 'guardsRed'
+  paint: 'navarraBlue'
 };
 
 /**
- * Paint presets — applied to the car's paint material as clearcoat lacquer.
+ * Paint presets — Audi-style palette, applied to the sedan's paint
+ * material as clearcoat lacquer. (Keys are stable across saves.)
  */
 export const PAINTS = {
-  guardsRed:   { label: 'GUARDS RED',   color: 0xc00d1e },
-  gtSilver:    { label: 'GT SILVER',    color: 0xd6d8dc },
-  nightBlue:   { label: 'NIGHT BLUE',   color: 0x12306e },
-  speedYellow: { label: 'SPEED YELLOW', color: 0xe8c414 },
-  jetBlack:    { label: 'JET BLACK',    color: 0x0a0b0d },
-  irishGreen:  { label: 'IRISH GREEN',  color: 0x0f5132 },
-  arcticGrey:  { label: 'ARCTIC GREY',  color: 0x8b9096 },
-  orange:      { label: 'LAVA ORANGE',  color: 0xe05206 }
+  guardsRed:   { label: 'TANGO RED',      color: 0xbb0a1e },
+  gtSilver:    { label: 'FLORETT SILVER', color: 0xd4d7d9 },
+  navarraBlue: { label: 'NAVARRA BLUE',   color: 0x0e3a5c },
+  speedYellow: { label: 'AURORA VIOLET',  color: 0x3d2a56 },
+  jetBlack:    { label: 'MYTHOS BLACK',   color: 0x0c0d0f },
+  irishGreen:  { label: 'GOODWOOD GREEN', color: 0x11402e },
+  arcticGrey:  { label: 'DAYTONA GREY',   color: 0x565b61 },
+  orange:      { label: 'GLACIER WHITE',  color: 0xe8ecea }
 };

@@ -51,6 +51,7 @@ export class Input {
     this.onCameraToggle = null;        // V
     this.onTransmissionToggle = null;  // M
     this.onSettingsKey = null;         // Escape (menu screens keep priority)
+    this.onMapKey = null;              // Tab — world map
     this._enabled = true;
 
     window.addEventListener('keydown', (e) => this._onKeyDown(e));
@@ -74,6 +75,7 @@ export class Input {
         case 'KeyQ': if (this.onShiftDown) this.onShiftDown(); break;
         case 'KeyV': if (this.onCameraToggle) this.onCameraToggle(); break;
         case 'KeyM': if (this.onTransmissionToggle) this.onTransmissionToggle(); break;
+        case 'Tab': if (this.onMapKey) { e.preventDefault(); this.onMapKey(); } break;
         case 'Escape': if (this.onSettingsKey) this.onSettingsKey(); break;
       }
     }

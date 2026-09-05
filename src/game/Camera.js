@@ -20,7 +20,7 @@
  */
 
 import * as THREE from 'three';
-import { CAMERA, CAR } from './Constants.js';
+import { CAMERA, CAR } from './core/Constants.js';
 
 const _fwd = new THREE.Vector3();
 const _right = new THREE.Vector3();

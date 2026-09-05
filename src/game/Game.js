@@ -1,27 +1,33 @@
 /**
- * Game — engine orchestrator. Owns the renderer, scene graph, fixed-step
- * physics loop, transmission, camera rig, journey state, settings, quality
- * application and all subsystem wiring.
+ * Game — engine orchestrator for APEX ROADS: OPEN WORLD.
  *
- * APEX ROADS: no laps, no countdown — an endless procedural drive. The
- * World streams road chunks around the car as it travels; the journey HUD
- * tracks distance, time and altitude.
+ * Owns the renderer, scene graph, fixed-step physics, transmission, camera
+ * rig, world streaming, day/night clock, weather, traffic, multiplayer,
+ * post-processing, journey state and all subsystem wiring.
+ *
+ * The world is a seeded, deterministic, infinite open world streamed in
+ * chunks; everything (terrain, roads, cities, traffic, weather regions,
+ * mystery zones) derives from the seed.
  */
 
 import * as THREE from 'three';
 import { World } from './World.js';
 import { Environment } from './Environment.js';
-import { Car } from './Car.js';
-import { VehiclePhysics } from './Physics.js';
-import { Transmission } from './Transmission.js';
+import { Car } from './vehicle/Car.js';
+import { VehiclePhysics } from './vehicle/Physics.js';
+import { Transmission } from './vehicle/Transmission.js';
 import { CameraRig } from './Camera.js';
 import { Input } from './Input.js';
 import { GameAudio } from './Audio.js';
 import { Effects, SpeedLines } from './Effects.js';
+import { Weather } from './weather/Weather.js';
+import { Traffic } from './traffic/Traffic.js';
+import { Net } from './multiplayer/Net.js';
+import { PostFX } from './rendering/PostFX.js';
 import { Settings } from './Settings.js';
 import { HUD } from '../ui/HUD.js';
 import { TouchControls } from '../ui/TouchControls.js';
-import { QUALITY, CAR } from './Constants.js';
+import { QUALITY, CAR, WORLD as W } from './core/Constants.js';
 
 const PHYS_STEP = 1 / 120;
 
@@ -31,24 +37,27 @@ export class Game {
     this.onReady = onReady;
     this.onError = onError;
 
-    this.state = 'booting'; // booting | loading | idle | driving
+    this.state = 'booting';   // booting | loading | idle | driving
     this._raf = null;
     this._clock = new THREE.Clock();
     this._accum = 0;
     this._idleAngle = 0;
     this._emitAcc = 0;
+    this._skidAcc = 0;
     this.particleFactor = 1;
     this.onProgress = null;
     this._cameraReapplied = false;
 
     // journey state
     this.journey = {
-      distance: 0,        // meters driven
-      time: 0,            // seconds since start
-      altitude: 0,        // current road elevation (m)
-      seed: 0
+      distance: 0,
+      time: 0,
+      altitude: 0,
+      seed: 0,
+      clock: 0.5          // world clock phase (0..1 of a day)
     };
-    this._milestone = 0;  // every 5 km chime
+    this._milestone = 0;
+    this._waypoint = null;
   }
 
   // ------------------------------------------------------------------ setup
@@ -64,7 +73,6 @@ export class Game {
     this.isIPhone = /iphone/i.test(navigator.userAgent);
     this.isIOS = this.isIPad || this.isIPhone;
 
-    // ---- settings ---------------------------------------------------------
     this.settings = new Settings();
 
     // ---- renderer --------------------------------------------------------
@@ -89,13 +97,13 @@ export class Game {
     // ---- scene -----------------------------------------------------------
     this.scene = new THREE.Scene();
     this.camera = new THREE.PerspectiveCamera(
-      62, window.innerWidth / window.innerHeight, 0.3, 2600
+      62, window.innerWidth / window.innerHeight, 0.3, 5200
     );
     this.camera.position.set(0, 12, -20);
 
     const aniso = Math.min(8, this.renderer.capabilities.getMaxAnisotropy());
 
-    // world seed: ?seed= in the URL, else random
+    // ---- world seed: ?seed= in the URL, else random ----------------------
     let seed = 1337;
     try {
       const qp = new URLSearchParams(window.location.search).get('seed');
@@ -103,40 +111,58 @@ export class Game {
       else seed = (Math.random() * 0xffffffff) >>> 0;
     } catch { seed = 1337; }
     this.journey.seed = seed;
+    this.journey.clock = this.settings.dayStart !== undefined ? this.settings.dayStart : 0.42;
 
-    this.track = new World(seed, aniso, this.settings.quality);
-    this.scene.add(this.track.group);
+    // ---- world ------------------------------------------------------------
+    this.world = new World(seed, aniso, this.settings.quality);
+    this.track = this.world;                 // legacy alias
+    this.scene.add(this.world.group);
 
-    this.environment = new Environment(this.scene, this.renderer, isMobile, this.settings.timeOfDay);
-    this._applyExposure(this.settings.timeOfDay);
+    // ---- atmosphere ---------------------------------------------------------
+    this.environment = new Environment(this.scene, this.renderer, isMobile);
+    this.weather = new Weather(this.scene, isMobile, seed);
+    this.weather.onThunder = () => {
+      this.audio && this.audio.beep(70, 0.5, 0.12, 'sawtooth');
+    };
 
     // ---- car + physics + transmission --------------------------------------
     this.transmission = new Transmission();
     this.transmission._onShift = (gear, isUp) => this.audio && this.audio.shiftBlip(isUp);
 
-    this.car = new Car(this.track);
+    this.car = new Car(this.world);
     this.scene.add(this.car.group);
 
-    this.phys = new VehiclePhysics(this.track, this.transmission);
-    this.phys.placeAt(this.track.startS, 0);
+    this.phys = new VehiclePhysics(this.world, this.transmission);
+    const sp = this.world.spawn();
+    this.phys.placeAtWorld(sp.x, sp.z, sp.heading);
+
+    this.world.chunks.prime(this.phys.position.x, this.phys.position.z);
 
     this.cameraRig = new CameraRig(this.camera);
-
     this.effects = new Effects(this.scene);
     this.speedLines = new SpeedLines(this.scene);
+
+    // ---- postfx ---------------------------------------------------------------
+    this.postfx = new PostFX(this.renderer, this.scene, this.camera,
+      !isMobile && this.settings.bloom);
 
     // ---- subsystems --------------------------------------------------------
     this.audio = new GameAudio();
     this.input = new Input();
+    this.traffic = new Traffic(this.scene, this.world, isMobile);
+    this.net = new Net(this.scene);
 
     this.hud = new HUD({
       onRecenter: () => this.recenterCar(),
-      onNewRoad: () => this.newRoad(),
+      onNewRoad: () => this.newWorld(),
       onMuteToggle: () => {
         this.audio.setMuted(!this.audio.muted);
         this.hud.setMuted(this.audio.muted);
       },
-      onSettingsChange: (key, value) => this.changeSetting(key, value)
+      onSettingsChange: (key, value) => this.changeSetting(key, value),
+      onSetWaypoint: (wx, wz) => this.setWaypoint(wx, wz),
+      onClearWaypoint: () => this.clearWaypoint(),
+      onTeleport: (wx, wz) => this.teleportTo(wx, wz)
     });
 
     this.touch = new TouchControls(this.input, {
@@ -148,11 +174,26 @@ export class Game {
     });
     if (this.touch.enabled) this.hud.markTouch();
 
+    this.world.mystery.onDiscover = (label) => {
+      this.hud.showLapToast('YOU FOUND ' + label);
+      this.audio && this.audio.lapDing();
+    };
+
     this._wireInput();
     this._applyAllSettings();
 
     // ---- events -------------------------------------------------------------
-    window.addEventListener('resize', () => this._onResize());
+    this._onResize = () => {
+      const w = window.innerWidth;
+      const h = window.innerHeight;
+      this.camera.aspect = w / h;
+      this.camera.updateProjectionMatrix();
+      const q = QUALITY[this.settings.quality] || QUALITY.medium;
+      this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, q.pixelRatio));
+      this.renderer.setSize(w, h);
+      this.postfx && this.postfx.setSize(w, h, Math.min(window.devicePixelRatio || 1, q.pixelRatio));
+    };
+    window.addEventListener('resize', this._onResize);
     window.addEventListener('orientationchange', () => setTimeout(() => this._onResize(), 250));
     document.addEventListener('visibilitychange', () => {
       if (!document.hidden && this.audio.started) {
@@ -160,7 +201,6 @@ export class Game {
       }
     });
 
-    // ---- debug hooks ----------------------------------------------------------
     window.__game = this;
 
     this.state = 'loading';
@@ -170,7 +210,6 @@ export class Game {
     this._loadAssets();
   }
 
-  /** Re-apply the persisted camera mode once the car's cockpit anchor is ready. */
   _reapplyCameraWhenReady() {
     if (this._cameraReapplied) return;
     if (!this.car || !this.car.ready || !this.car.cockpitAnchor) return;
@@ -180,14 +219,18 @@ export class Game {
     this.hud.setCockpitMode(this.settings.camera === 'cockpit');
   }
 
-  /** Build everything procedurally — no network assets. */
+  /** Load the GLB car + prime streaming */
   async _loadAssets() {
     const progress = (frac, label) => {
       if (this.onProgress) this.onProgress(frac, label);
     };
     try {
-      progress(0.05, 'GENERATING WORLD…');
-      await this.car.build((t) => progress(0.05 + t * 0.85, 'BUILDING CAR…'));
+      progress(0.05, 'LOADING CAR…');
+      await this.car.build((t) => progress(0.05 + t * 0.8, 'LOADING CAR…'));
+      this.car.setPaint(this.settings.paint);
+      progress(0.9, 'STREAMING WORLD…');
+      // let a few frames of chunk streaming happen before revealing
+      await new Promise((r) => setTimeout(r, 120));
       progress(1, 'READY');
       this._reapplyCameraWhenReady();
     } catch (err) {
@@ -200,12 +243,12 @@ export class Game {
 
   _wireInput() {
     this.input.onResetKey = () => {
-      if (this.hud.settingsOpen) return;
+      if (this.hud.settingsOpen || this.hud.mapOpen) return;
       if (this.state === 'driving') this.recenterCar();
     };
     this.input.onNewRoadKey = () => {
-      if (this.hud.settingsOpen) return;
-      if (this.state === 'driving' || this.state === 'idle') this.newRoad();
+      if (this.hud.settingsOpen || this.hud.mapOpen) return;
+      if (this.state === 'driving' || this.state === 'idle') this.newWorld();
     };
     this.input.onShiftUp = () => this._shift(1);
     this.input.onShiftDown = () => this._shift(-1);
@@ -214,16 +257,9 @@ export class Game {
     this.input.onSettingsKey = () => {
       if (this.state === 'driving') this.hud.toggleSettings();
     };
-  }
-
-  _onResize() {
-    const w = window.innerWidth;
-    const h = window.innerHeight;
-    this.camera.aspect = w / h;
-    this.camera.updateProjectionMatrix();
-    const q = QUALITY[this.settings.quality] || QUALITY.medium;
-    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, q.pixelRatio));
-    this.renderer.setSize(w, h);
+    this.input.onMapKey = () => {
+      if (this.state === 'driving' || this.state === 'idle') this.hud.toggleMap();
+    };
   }
 
   // ------------------------------------------------------------- settings
@@ -239,19 +275,35 @@ export class Game {
     this.input.sensitivity = s.steerSensitivity;
     this.audio.setVolumes(s.masterVolume, s.engineVolume);
     this._applyQuality(s.quality);
-    this.environment.applyPreset(s.timeOfDay);
-    this._applyExposure(s.timeOfDay);
-    if (this.car) this.car.setHeadlights(this.environment.headlightsOn);
+    if (this.car && this.car.ready) this.car.setPaint(s.paint);
+    this.traffic.enabled = !!s.traffic;
+    if (s.multiplayer) {
+      this.net.connect(this.journey.seed, s.playerName);
+    }
     this.hud.syncSettings(s.data);
     this.hud.setModes(s.transmission, s.camera);
     this.car.cockpitMode = s.camera === 'cockpit' && this.car.cockpitAnchor;
     this.hud.setCockpitMode(s.camera === 'cockpit');
-    if (this.car.ready) this.car.setPaint(s.paint);
   }
 
-  _applyExposure(tod) {
-    const p = { dawn: 1.12, day: 1.1, dusk: 1.15, night: 1.18 }[tod] || 1.1;
-    this.renderer.toneMappingExposure = p;
+  _applyQuality(name) {
+    const q = QUALITY[name] || QUALITY.medium;
+    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, q.pixelRatio));
+    this.renderer.shadowMap.enabled = q.shadows;
+    const sun = this.environment.sun;
+    if (q.shadows) {
+      if (sun.shadow.mapSize.x !== q.shadowMapSize) {
+        sun.shadow.mapSize.set(q.shadowMapSize, q.shadowMapSize);
+        if (sun.shadow.map) {
+          sun.shadow.map.dispose();
+          sun.shadow.map = null;
+        }
+      }
+    }
+    this.world.setQuality(name);
+    this.particleFactor = q.particles;
+    this.postfx && this.postfx.setEnabled(!this.isMobile && this.settings.bloom && q.bloom);
+    this._onResize && this._onResize();
   }
 
   changeSetting(key, value) {
@@ -269,12 +321,24 @@ export class Game {
         break;
       case 'quality':
         this._applyQuality(value);
-        this.hud.showLapToast('GRAPHICS: ' + (QUALITY[value]?.label || value) + ' — TAKES EFFECT ON NEW ROAD');
+        this.hud.showLapToast('GRAPHICS: ' + (QUALITY[value]?.label || value));
         break;
-      case 'timeOfDay':
-        this.environment.applyPreset(value);
-        this._applyExposure(value);
-        this.car.setHeadlights(this.environment.headlightsOn);
+      case 'paint':
+        if (this.car.ready) this.car.setPaint(value);
+        break;
+      case 'traffic':
+        this.traffic.enabled = !!value;
+        break;
+      case 'bloom':
+        this.postfx && this.postfx.setEnabled(!this.isMobile && !!value &&
+          (QUALITY[this.settings.quality] || QUALITY.medium).bloom);
+        break;
+      case 'multiplayer':
+        if (value) this.net.connect(this.journey.seed, this.settings.playerName);
+        else this.net.disconnect();
+        break;
+      case 'playerName':
+        if (this.settings.multiplayer) this.net.connect(this.journey.seed, value);
         break;
       case 'masterVolume':
       case 'engineVolume':
@@ -286,36 +350,8 @@ export class Game {
       case 'cameraSmoothing':
         this.cameraRig.setSmoothing(value);
         break;
-      case 'paint':
-        if (this.car.ready) this.car.setPaint(value);
-        break;
     }
     this.hud.syncSettings(this.settings.data);
-  }
-
-  _applyQuality(name) {
-    const q = QUALITY[name] || QUALITY.medium;
-    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, q.pixelRatio));
-    this.renderer.shadowMap.enabled = q.shadows;
-    const sun = this.environment.sun;
-    if (q.shadows) {
-      if (sun.shadow.mapSize.x !== q.shadowMapSize) {
-        sun.shadow.mapSize.set(q.shadowMapSize, q.shadowMapSize);
-        if (sun.shadow.map) {
-          sun.shadow.map.dispose();
-          sun.shadow.map = null;
-        }
-      }
-    }
-    // scale fog range with the quality preset (keeps the horizon believable
-    // on low-end devices without revealing the streaming edge)
-    const tod = this.settings.timeOfDay;
-    const base = { dawn: 950, day: 1250, dusk: 850, night: 800 }[tod] || 1250;
-    this.scene.fog.far = Math.round(base * q.fogScale);
-    this.particleFactor = q.particles;
-    this.scene.traverse((o) => {
-      if (o.isMesh && o.material) o.material.needsUpdate = true;
-    });
   }
 
   // ------------------------------------------------- transmission / camera
@@ -353,8 +389,7 @@ export class Game {
     this.hud.showLapToast(next === 'manual' ? 'MANUAL (Q/E)' : 'AUTOMATIC');
   }
 
-  // ------------------------------------------------------------- journey flow
-  /** called from the start screen (user gesture — unlocks audio) */
+  // ------------------------------------------------------------- flow
   startDriving() {
     if (this.state === 'loading' || !this.car.ready) return;
     this.audio.init();
@@ -365,8 +400,8 @@ export class Game {
 
   _beginDrive() {
     this.hud.toggleSettings(false);
+    this.hud.toggleMap(false);
     this.input.setEnabled(true);
-    this.phys.placeAt(this.track.startS, 0);
     this.journey.distance = 0;
     this.journey.time = 0;
     this._milestone = 0;
@@ -374,23 +409,54 @@ export class Game {
     this.cameraRig.snap(this.car, this.phys);
   }
 
-  /** drop the car back onto the road ahead of the current position */
   recenterCar() {
     if (this.state !== 'driving') return;
-    const s = this.phys.s + 15;
-    this.phys.placeAt(s, 0);
+    // snap back onto the nearest road, facing along it
+    const q = this.world.locate(this.phys.position.x, this.phys.position.z);
+    if (q) {
+      const px = q.route && q.route.kind === 'col'
+        ? (q.route ? this.world.network.coordAt(q.route, this.phys.position.z) : 0)
+        : this.phys.position.x;
+      const targetX = this.phys.position.x - q.rightX * q.lateral;
+      const targetZ = this.phys.position.z - q.rightZ * q.lateral;
+      const heading = Math.atan2(q.tx, q.tz);
+      this.phys.placeAtWorld(targetX, targetZ, heading);
+    } else {
+      const sp = this.world.spawn();
+      this.phys.placeAtWorld(sp.x, sp.z, sp.heading);
+    }
     this.cameraRig.snap(this.car, this.phys);
     this.hud.showLapToast('BACK ON THE ROAD');
   }
 
-  /** tear the world down and generate a fresh road from a new seed */
-  newRoad() {
+  newWorld() {
     const seed = (Math.random() * 0xffffffff) >>> 0;
     this.journey.seed = seed;
-    this.track.regenerate(seed);
+    this.world.regenerate(seed);
+    const sp = this.world.spawn();
+    this.phys.placeAtWorld(sp.x, sp.z, sp.heading);
+    this.world.chunks.prime(this.phys.position.x, this.phys.position.z);
     this._beginDrive();
     this.cameraRig.snap(this.car, this.phys);
-    this.hud.showLapToast('NEW ROAD — SEED ' + seed);
+    this.hud.showLapToast('NEW WORLD — SEED ' + seed);
+    if (this.net.connected) this.net.connect(seed, this.settings.playerName);
+  }
+
+  setWaypoint(x, z) {
+    this._waypoint = { x, z };
+    this.hud.showLapToast('WAYPOINT SET');
+  }
+
+  clearWaypoint() {
+    this._waypoint = null;
+  }
+
+  teleportTo(x, z) {
+    if (this.state !== 'driving' && this.state !== 'idle') return;
+    const y = this.world.groundAt(x, z).y;
+    this.phys.placeAtWorld(x, z, this.phys.heading);
+    this.cameraRig.snap(this.car, this.phys);
+    this.hud.showLapToast('TELEPORTED');
   }
 
   // -------------------------------------------------------------- main loop
@@ -399,7 +465,7 @@ export class Game {
     const dt = Math.min(this._clock.getDelta(), 0.1);
     if (dt <= 0) return;
 
-    const controlsActive = this.state === 'driving';
+    const controlsActive = this.state === 'driving' && !this.hud.mapOpen;
 
     this.input.update(dt);
 
@@ -415,7 +481,11 @@ export class Game {
       if (steps === 8) this._accum = 0;
     }
 
-    // journey stats
+    // world clock + journey stats
+    const dayLen = this.settings.dayLength || 1200;
+    if (this.settings.dayCycle) {
+      this.journey.clock = (this.journey.clock + dt / dayLen) % 1;
+    }
     if (this.state === 'driving') {
       const ds = Math.abs(this.phys.vF) * dt;
       this.journey.distance += ds;
@@ -429,12 +499,50 @@ export class Game {
       }
     }
 
-    // world streaming (road chunks + scenery around the car)
-    this.track.update(this.phys.position, this.particleFactor >= 0.6 ? 1 : 0.5, dt);
+    // weather region (throttled)
+    this._regionAcc = (this._regionAcc || 0) + dt;
+    if (this._regionAcc > 2) {
+      this._regionAcc = 0;
+      const region = this.world.terrain.region(this.phys.position.x, this.phys.position.z);
+      this.weather.setRegion(region);
+    }
+    if (this.settings.weather) {
+      this.weather.update(dt, this.camera.position, 0, this.environment);
+      this.phys.gripMul = this.weather.gripMul;
+      if ((this._wetAcc = (this._wetAcc || 0) + dt) > 0.5) {
+        this._wetAcc = 0;
+        this.weather.applyRoadWetness(this.world.scenery);
+      }
+    }
+
+    // atmosphere
+    this.environment.applyAtmosphere(this.journey.clock, this.weather);
+    this.renderer.toneMappingExposure = this.environment.exposure;
+    this.car.setHeadlights(this.environment.headlightsOn);
+    this.world.scenery.matBuilding.emissiveIntensity =
+      this.environment.sunElevation < 0.1 ? 0.9 : 0.0;
+    this.world.scenery.matLampGlow.color.setHex(
+      this.environment.sunElevation < 0.12 ? 0xffd9a0 : 0x777168
+    );
+    this.world.scenery.matBeacon.visible = true;
+
+    // world streaming — budget grows when frames are slow (weak GPUs) so
+    // the queue still drains, and stays small at high frame rates
+    const streamBudget = dt > 0.2 ? 22 : 4.5;
+    this.world.update(this.phys.position, dt, streamBudget);
+    if (this.state === 'driving') {
+      this.world.mystery.checkDiscovery(this.phys.position.x, this.phys.position.z);
+    }
 
     // visuals
     this.car.updateVisual(dt, this.phys, this.transmission);
     this._updateEffects(dt);
+
+    // traffic
+    this.traffic.update(dt, this.phys.position, this.phys.velocity, this.environment.sunElevation < 0.12);
+
+    // multiplayer
+    this.net.update(dt, this.phys, this.car.group);
 
     // camera
     if (this.state === 'idle' || this.state === 'loading') {
@@ -456,16 +564,24 @@ export class Game {
       throttle: this.phys.throttleOut,
       speedN: Math.min(1, Math.abs(this.phys.vF) / CAR.maxSpeed),
       slip: this.phys.slip,
-      onGrass: this.phys.onGrass,
+      onGrass: this.phys.onGrass || this.phys.onDirt,
       onCurb: this.phys.onCurb,
       reversing: this.phys.reversing,
       launching: this.transmission.launching,
       limiter: this.transmission.limiterCut
     });
 
-    this.hud.update(this.phys, this.journey, this.transmission);
+    // HUD (throttled canvas work happens inside)
+    this.hud.update(this.phys, this.journey, this.transmission, {
+      world: this.world,
+      weather: this.weather,
+      trafficVehicles: this.traffic.vehicles,
+      net: this.net,
+      waypoint: this._waypoint,
+      chunksPending: this.world.chunks.pendingCount
+    });
 
-    this.renderer.render(this.scene, this.camera);
+    this.postfx.render(this.renderer, this.scene, this.camera);
 
     if (this.onReady) {
       this.onReady();
@@ -478,7 +594,7 @@ export class Game {
     const phys = this.phys;
     const speed = Math.abs(phys.vF);
     const drifting = phys.slip > 3.2 && speed > 4;
-    const offroad = phys.onGrass && speed > 8;
+    const offroad = (phys.onGrass || phys.onDirt) && speed > 8;
     const spinning = phys.wheelspin && speed < 30;
 
     if (!(drifting || offroad || spinning)) {
@@ -509,22 +625,16 @@ export class Game {
   _updateIdleCamera(dt) {
     this._idleAngle += dt * 0.22;
     const c = this.phys.position;
-    const r = 22;
+    const r = 12;
     const x = c.x + Math.cos(this._idleAngle) * r;
     const z = c.z + Math.sin(this._idleAngle) * r;
-    this.camera.position.set(x, c.y + 7.5, z);
-    this.camera.lookAt(c.x, c.y + 1.0, c.z);
+    this.camera.position.set(x, c.y + 4.2, z);
+    this.camera.lookAt(c.x, c.y + 0.9, c.z);
   }
 
   // --------------------------------------------------------------- testing
-  /**
-   * Test hook: run the fixed-step physics loop synchronously for `seconds`
-   * with a given input vector — deterministic, used by automated checks.
-   */
   debugSim(seconds, { throttle = 0, brake = 0, steer = 0, handbrake = false } = {}) {
-    const inputProxy = {
-      state: { throttle, brake, steer, handbrake }
-    };
+    const inputProxy = { state: { throttle, brake, steer, handbrake } };
     const steps = Math.round(seconds / PHYS_STEP);
     this._simLock = true;
     for (let i = 0; i < steps; i++) {
@@ -538,54 +648,49 @@ export class Game {
       rpm: Math.round(this.transmission.rpm),
       slip: +this.phys.slip.toFixed(2),
       aLongS: +this.phys.aLongS.toFixed(2),
-      s: Math.round(this.phys.s),
-      lateral: +this.phys.lateral.toFixed(1),
       surfaceY: +this.phys.surfaceY.toFixed(2),
-      yawRate: +this.phys.yawRate.toFixed(3)
+      yawRate: +this.phys.yawRate.toFixed(3),
+      pos: { x: Math.round(this.phys.position.x), z: Math.round(this.phys.position.z) }
     };
   }
 
-  /**
-   * Test hook: drive the endless road with a simple lookahead autopilot to
-   * exercise the full physics + streaming stack.
-   */
   debugAutopilot(seconds) {
     const p = this.phys;
-    const t = this.track;
+    const w = this.world;
     let maxKmh = 0, offroadSteps = 0;
     const steps = Math.round(seconds / PHYS_STEP);
     this._simLock = true;
     for (let i = 0; i < steps; i++) {
-      // target speed from upcoming curvature (grip-limited)
-      let maxCurv = 0;
-      const idxNow = p.sampleIdx;
-      for (let k = 4; k <= 90; k += 4) {
-        const si = idxNow + k;
-        const smp = t.samples[Math.min(si, t.samples.length - 1)];
-        if (smp) maxCurv = Math.max(maxCurv, Math.abs(smp.curv));
+      const fwdX = Math.sin(p.heading), fwdZ = Math.cos(p.heading);
+      const look = Math.min(60, Math.max(10, p.vF * 1.4));
+      const ahead = w.groundAt(p.position.x + fwdX * look, p.position.z + fwdZ * look);
+      const q = w.locate(p.position.x, p.position.z);
+      let steer = 0, throttle = 0.7, brake = 0;
+      if (q) {
+        // aim at the road centerline ahead (steer = -err, matching Input's
+        // +1 = right convention against yaw-positive-left headings)
+        const aheadQ = w.locate(p.position.x + fwdX * look, p.position.z + fwdZ * look);
+        const targetX = p.position.x + fwdX * look + (aheadQ ? -aheadQ.rightX * aheadQ.lateral : 0);
+        const targetZ = p.position.z + fwdZ * look + (aheadQ ? -aheadQ.rightZ * aheadQ.lateral : 0);
+        const desired = Math.atan2(targetX - p.position.x, targetZ - p.position.z);
+        let err = desired - p.heading;
+        while (err > Math.PI) err -= 2 * Math.PI;
+        while (err < -Math.PI) err += 2 * Math.PI;
+        steer = Math.max(-1, Math.min(1, -err * 2.6));
       }
-      const vT = Math.min(52, Math.sqrt(0.82 * 9.81 / Math.max(maxCurv, 0.0004)));
-      const lookM = Math.min(55, Math.max(8, p.vF * 1.35));
-      const ahead = t.pointAt(p.s + lookM);
-      const dx = ahead.x - p.position.x, dz = ahead.z - p.position.z;
-      const desired = Math.atan2(dx, dz);
-      let err = desired - p.heading;
-      while (err > Math.PI) err -= 2 * Math.PI;
-      while (err < -Math.PI) err += 2 * Math.PI;
-      const steer = Math.max(-1, Math.min(1, -err * 2.6));
-      const throttle = p.vF < vT ? 1 : 0;
-      const brake = p.vF > vT * 1.1 ? Math.min(1, (p.vF - vT) * 0.25) : 0;
+      const vT = q && q.type === 0 ? 40 : 24;
+      if (p.vF < vT) throttle = 1;
+      if (p.vF > vT * 1.08) { throttle = 0; brake = Math.min(1, (p.vF - vT) * 0.2); }
       p.update(PHYS_STEP, { state: { throttle, brake, steer, handbrake: false } }, true);
-      if (Math.abs(p.lateral) > t.roadHalfWidth) offroadSteps++;
+      if (!p.onRoad) offroadSteps++;
       maxKmh = Math.max(maxKmh, p.speedKmh);
     }
     this._simLock = false;
     return {
       maxKmh: Math.round(maxKmh),
       offroadSteps,
-      s: Math.round(p.s),
-      lateral: +p.lateral.toFixed(1),
-      kmh: Math.round(p.speedKmh)
+      kmh: Math.round(p.speedKmh),
+      pos: { x: Math.round(p.position.x), z: Math.round(p.position.z) }
     };
   }
 

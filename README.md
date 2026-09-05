@@ -1,139 +1,86 @@
-# APEX ROADS — Endless Procedural Driving
+# APEX ROADS — Open World Driving
 
-**APEX ROADS** is an endless, *slowroads*-style driving game that runs entirely
-in your browser: an infinite road generated as you drive, winding through
-rolling hills, patchwork farmland, ranch fences, barns, pine forests and
-wind farms — paired with a proper vehicle-dynamics simulation (slip angles,
-Pacejka-style tire curves, friction ellipse, load transfer) that makes
-braking, weight transfer and catchable drifts feel real.
+**APEX ROADS** is a seeded, *open-world* driving game that runs entirely in
+your browser. Every world grows deterministically from a single seed:
+an infinite network of highways, avenues, ring roads and city streets,
+villages that swell into megacities, rivers and lakes, mountain passes with
+covered cut galleries, viaducts over the water — plus regional weather,
+a full day/night cycle, lane-following traffic, and a mystery system that
+slowly unhinges the world the farther you drive from the origin.
 
 Play it live: **https://thepredicator-ctrl.github.io/apex-circuit/**
 
-## Features
+## The World
 
-- **Endless procedural roads** — the centerline is derived from seeded
-  value-noise (curvature → heading, slope → elevation, superelevation on
-  corners), so the world is deterministic per seed and streams in 128 m
-  chunks around the car. Press **N** anytime for a brand-new road, or share
-  a seed via `?seed=123456` in the URL.
-- **Streaming 3D terrain** — rolling hills blend smoothly into the road
-  corridor (no cliffs, no pops), with distant snow-capped mountains riding
-  the horizon.
-- **Rich living environment** — mixed conifer/broadleaf forests, grass
-  tufts, bushes and rocks, reflector posts, wooden ranch fences, hay bales,
-  red barns, power poles with crossarms, **spinning wind turbines**,
-  drifting volumetric-style clouds, and a flock of birds circling overhead.
-- **Real vehicle physics** — a dynamic bicycle model with per-axle slip
-  angles, Pacejka "magic formula" tires with post-peak grip falloff, a
-  friction ellipse for combined slip, longitudinal + lateral load transfer,
-  aerodynamic downforce, load-sensitive grip, tire force relaxation length,
-  a 6-speed gearbox with clutch slip and rev limiter, and an emergency
-  handbrake with proper locked-wheel kinetics. Understeer, oversteer and
-  counter-steering all *emerge* from the model — nothing is scripted.
-- **Detailed low-poly coupe** — sculpted tapered body panels, fender arches,
-  raked greenhouse with chrome beltline trim, 5-spoke alloys over visible
-  brake discs and red calipers, dual exhausts, lip spoiler, grille slats,
-  LED daytime-running lights, full-width taillight bar (brake-reactive),
-  mirrors, wipers, sunroof and shark-fin antenna. Fully modeled cockpit with
-  animated gauges (view with **V**).
-- **Four times of day** — dawn / day / dusk / night presets drive a gradient
-  sky shader, sun/moon, fog, star field, cloud tint and auto headlights.
-- **Full HUD** — canvas tachometer with shift lights and gear indicator,
-  journey odometer, altitude and road seed. No timers: this is a relaxing
-  drive, not a race.
-- **PWA** — installable, works offline after the first visit (service
-  worker precaches the whole game; zero network assets are used at runtime).
+- **World-scale road network** — roads are analytic, seeded routes on two
+  lattices (highways every ~4.2 km, avenues every ~1.5 km) that meander with
+  layered noise, so they are perfectly coherent across chunks and infinite in
+  extent. Highway crossings become grade-separated interchanges with diamond
+  ramps; cities contribute rotated street grids and ring roads.
+- **Engineered road elevation** — routes march over the low-frequency terrain
+  with a 7.5 % grade limiter, never dip below water level (causeways and
+  viaducts with rails and pylons), and climb real mountains. Deep cuts get
+  portal-framed galleries.
+- **Procedural cities** — villages, towns, cities and megacities (with a
+  165 m landmark tower) spawn on flat coastal shelves: downtown towers,
+  commercial mid-rise, residential blocks, suburbs, an industrial warehouse
+  wedge, parking lots and pocket parks, all instanced and window-lit at night.
+- **Biomes & water** — oceans, beaches, plains, forests, deserts, rocky
+  mountains and snow, with rivers carving toward the sea and lakes filling
+  the basins below sea level.
+- **The Deep** — beyond ~6 km the world starts changing: ashen tints, dead
+  groves, wrecked pile-ups, stone circles, leaning monolith arches, and
+  rarely… something impossible. No meter, no warnings. You just drive.
 
-## Install it on your device (PWA)
+## The Drive
 
-Open the site, then use **INSTALL GAME ON DEVICE** (Chrome/Edge desktop &
-Android) — iOS Safari users can use *Share → Add to Home Screen* and the
-**PRE-DOWNLOAD GAME** button to keep the cached game beyond Safari's
-7-day eviction window.
+- **The CARRERA** — a textured sports-coupe GLB with independently rigged
+  wheels (suspension travel, steering, rolling), working tail/brake lights
+  and headlight spotlights.
+- **Real vehicle physics** — a dynamic bicycle model: per-axle slip angles,
+  Pacejka-style tires with post-peak falloff, friction ellipse, load
+  transfer, aero downforce, ABS that keeps panic stops short *and steerable*
+  (100–0 km/h in ~2.8 s), a locked-rear handbrake for drift entries,
+  relaxation-length tire response and a low-speed kinematic blend.
+- **7-speed powertrain** — torque curve, clutch slip on launch, rev limiter,
+  automatic + manual (Q/E) modes, engine audio synthesized live.
+- **Traffic** — AI vehicles that follow lanes, keep gaps, overtake on
+  highways, yield near junctions, and thin out in the wilderness.
+- **Weather & time** — a continuous day/night cycle (headlights, stars,
+  city windows) and regional weather (clear / cloudy / fog / rain / storms
+  with lightning and wet-road grip loss).
 
-## Quick start
+## Interface
+
+Speedometer + tachometer, status panel (road, region, coordinates, world
+clock, weather, seed), rotating radar minimap, a full **world map (Tab)**
+with click-to-waypoint + teleport, toasts, graphics presets (LOW/MED/HIGH
+with view distance + bloom), and settings that persist locally.
+
+## Tech
+
+- Three.js r182, zero frameworks in the game layer — modular systems:
+  `core/` (seeded noise, tuning), `world/` (terrain, road network, cities,
+  chunk streamer, scenery, mystery), `vehicle/` (physics, GLB car,
+  transmission), `traffic/`, `weather/`, `multiplayer/`, `rendering/`
+  (bloom post-FX), `ui/` (HUD, minimap, world map).
+- 192 m chunks stream in a time-budgeted build queue with prioritized
+  nearest-first ordering and full geometry disposal behind you — the world
+  never grows in memory while you drive.
+- Everything is derived from the seed: no assets to sync, and every player
+  of seed **X** drives the *same* world. Multiplayer-ready relay rooms are
+  keyed by seed (offline builds silently run solo).
+- PWA: installable, the service worker precaches the app shell + car model
+  so the whole world generates offline.
+
+## Run it
 
 ```bash
 npm install
-npm run dev        # → http://localhost:5173
+npm run dev        # vite dev server
+npm run build      # production build + service worker manifest
+npm run preview    # serve the production build
 ```
 
-## Production build
-
-```bash
-npm run build      # vite build + service-worker precache manifest
-npm run preview    # serve dist/ locally
-```
-
-## Controls
-
-| Key                        | Action                                  |
-| -------------------------- | --------------------------------------- |
-| `W` / `↑`                  | Throttle                                |
-| `S` / `↓`                  | Brake / reverse                         |
-| `A` `D` / `←` `→`          | Steer                                   |
-| `Space`                    | Handbrake (locked rear slides)          |
-| `Q` / `E`                  | Shift down / up (manual mode)           |
-| `M`                        | Auto ↔ manual transmission              |
-| `V`                        | Camera: chase → hood → cockpit          |
-| `R`                        | Recenter car on the road                |
-| `N`                        | Generate a brand-new road (new seed)    |
-| `Esc`                      | Settings                                |
-
-Touch devices get on-screen steering, pedals, gears and camera controls
-automatically.
-
-## Project structure
-
-```
-index.html              app shell (loading / start / error screens)
-src/
-  main.js               bootstrap, WebGL check, PWA install + offline cache
-  styles/main.css       HUD, overlays, touch controls
-  game/
-    Game.js             orchestrator: loop, journey state, settings, quality
-    World.js            endless road + terrain streaming, all scenery
-    Physics.js          dynamic bicycle model, Pacejka tires, handbrake
-    Transmission.js     engine + 6-speed gearbox + clutch model
-    Car.js              procedural detailed coupe + wheels + lights
-    Interior.js         procedural cockpit, dashboard and gauges
-    Environment.js      sky shader, sun/moon, fog, stars, clouds, birds
-    Camera.js           chase / hood / cockpit rigs
-    Audio.js            procedural engine, tires, wind, chimes
-    Effects.js          drift smoke / dust particles, speed lines
-    Input.js            keyboard + gamepad-ish smoothing, touch bridging
-    Constants.js        every tuning knob (vehicle, world, quality, paints)
-    Settings.js         persisted player settings
-  ui/
-    HUD.js              tachometer canvas, journey panel, settings panel
-    TouchControls.js    on-screen controls for phones/tablets
-public/                 PWA manifest, icons, service worker
-scripts/                build helpers (precache manifest, icon generator)
-```
-
-## Implementation notes
-
-- **Road model** — every 4 m sample derives curvature, slope and banking
-  from layered value noise on its *absolute index*, so chunks can be
-  generated incrementally in any travel direction with zero seams.
-  Chunks own their slice of road ribbon, two terrain strips (vertex-colored
-  with dry/grass/field tints) and instanced scenery allocated from recycled
-  pools, so driving 100 km uses bounded memory.
-- **Vehicle model** — forces live at the axle: slip angles from CG velocity
-  + yaw rate, tire forces via the magic formula with load sensitivity and
-  post-peak falloff, longitudinal forces capped by the friction ellipse,
-  weight transfer from true CG acceleration. At parking speeds it blends
-  into a kinematic model so maneuvers stay precise.
-- **Performance** — flat/low-poly shading, instanced scenery, capped shadow
-  frustum that follows the car, and LOW/MED/HIGH quality presets (pixel
-  ratio, shadows, fog distance, scenery density).
-
-## Browser support
-
-Any modern browser with WebGL2 (Chrome, Edge, Firefox, Safari 16+). Works
-on desktop and mobile; quality scales down automatically on phones.
-
-## License
-
-MIT — see `LICENSE` if present. Three.js is bundled as an npm dependency
-under its own MIT license.
+Share any world with `?seed=123456` in the URL. Press **N** in-game for a
+brand-new world, **R** to snap back onto the road, **Tab** for the map.

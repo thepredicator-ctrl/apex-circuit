@@ -1,20 +1,13 @@
 /**
  * Settings — player preferences persisted in localStorage.
- * Transmission mode, camera mode, time of day, graphics quality, volumes,
- * sensitivities, paint.
+ * Transmission, camera, quality, world clock, weather, traffic, bloom,
+ * multiplayer identity, volumes, sensitivities, paint.
  */
 
-import { DEFAULT_SETTINGS } from './Constants.js';
+import { DEFAULT_SETTINGS } from './core/Constants.js';
 
-const KEY = 'apex-roads:settings';
+const KEY = 'apex-roads:settings:v2';
 
-/**
- * Pick a sensible default graphics quality based on the device.
- * iPads and phones get 'low' (3x retina screens + mobile WebGL is brutal
- * on fill-rate; shadows are the single biggest framerate killer on iPad
- * Safari). Desktops / laptops get 'medium'. The user can still bump it up
- * in Settings, but the default must run well on the worst supported device.
- */
 function detectDefaultQuality() {
   try {
     const ua = navigator.userAgent;
@@ -24,7 +17,7 @@ function detectDefaultQuality() {
     if (isIOS || isAndroid) return 'low';
     const cores = navigator.hardwareConcurrency || 4;
     const mem = navigator.deviceMemory || 4;
-    if (cores < 8 || mem < 8) return 'medium';
+    if (cores < 8 || mem < 8) return 'low';
     return 'medium';
   } catch {
     return 'medium';
@@ -33,9 +26,6 @@ function detectDefaultQuality() {
 
 export class Settings {
   constructor() {
-    // detect device-appropriate default quality BEFORE we overlay saved prefs
-    // so first-time visitors on iPad don't get stuck on the old 'medium' preset
-    // (which was cratering the framerate).
     this.data = { ...DEFAULT_SETTINGS, quality: detectDefaultQuality() };
     this._load();
   }
@@ -48,7 +38,6 @@ export class Settings {
       for (const k of Object.keys(DEFAULT_SETTINGS)) {
         if (saved && k in saved) {
           const v = saved[k];
-          // only accept values of the same primitive type
           if (typeof v === typeof DEFAULT_SETTINGS[k]) this.data[k] = v;
         }
       }
@@ -59,10 +48,18 @@ export class Settings {
   get camera() { return this.data.camera; }
   get quality() { return this.data.quality; }
   get timeOfDay() { return this.data.timeOfDay; }
+  get dayCycle() { return this.data.dayCycle; }
+  get dayLength() { return this.data.dayLength; }
+  get weather() { return this.data.weather; }
   get masterVolume() { return this.data.masterVolume; }
   get engineVolume() { return this.data.engineVolume; }
   get steerSensitivity() { return this.data.steerSensitivity; }
   get cameraSmoothing() { return this.data.cameraSmoothing; }
+  get paint() { return this.data.paint; }
+  get traffic() { return this.data.traffic; }
+  get bloom() { return this.data.bloom; }
+  get multiplayer() { return this.data.multiplayer; }
+  get playerName() { return this.data.playerName; }
 
   set(key, value) {
     if (!(key in this.data)) return;
@@ -76,4 +73,3 @@ export class Settings {
     } catch { /* storage unavailable — session-only settings */ }
   }
 }
-
