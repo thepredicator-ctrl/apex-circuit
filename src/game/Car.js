@@ -257,79 +257,139 @@ export class Car {
 
   // -------------------------------------------------------------- wheels
   /**
-   * Find wheel meshes by material name and rig each one.
+   * Find wheel meshes and rig each one for spin + steer + suspension.
    *
-   * The Audi model has 4 tire meshes (material name = "tire") + 4 brake/rim
-   * detail meshes (material name = "WHEEL"). We use the "tire" meshes as
-   * the primary wheels and attach the "WHEEL" meshes to the same spin group
-   * if they're close to a tire.
+   * The Audi model has 4 tire meshes whose positions are encoded in parent
+   * node `matrix` properties (not `translation`). We find them by:
+   *   1. Scanning for materials named "tire" or "wheel"
+   *   2. Falling back to node names starting with "WHEEL_"
    *
-   * Each tire mesh's world-space center (from its bounding box) determines
-   * its position: front/rear (Z axis) and left/right (X axis).
+   * CRITICAL: we must call this.group.updateMatrixWorld(true) BEFORE reading
+   * any mesh.matrixWorld — otherwise the parent transforms (this.model's
+   * -90° Y rotation + the scene's +90° Y rotation) haven't been composed
+   * into matrixWorld, and all wheel positions come out as (0,0,0).
    */
   _rigWheelsFromMaterials(scene) {
-    // ---- find all meshes with "tire" material ---------------------------
+    // ---- force-update the ENTIRE transform chain so matrixWorld is valid --
+    // this.model has rotation.y = -PI/2 (set in constructor) but its
+    // matrixWorld was never computed. Without this call, mesh.matrixWorld
+    // is garbage and all wheel centers come out at (0,0,0).
+    this.group.updateMatrixWorld(true);
+
+    // ---- find tire meshes by material name OR node name -----------------
     const tireMeshes = [];
-    scene.updateMatrixWorld(true);
+    const seen = new Set();
     scene.traverse((o) => {
-      if (!o.isMesh || !o.material) return;
-      const matName = (o.material.name || '').toLowerCase();
-      if (matName === 'tire' || matName.includes('tyre')) {
+      if (!o.isMesh || !o.geometry || seen.has(o)) return;
+      const matName = (o.material && o.material.name || '').toLowerCase();
+      const isTireByMat = matName === 'tire' || matName.includes('tyre');
+      // also check the node name — the Audi has nodes named "WHEEL_RR_133"
+      // etc. whose children include the tire mesh
+      let isTireByNode = false;
+      let parent = o.parent;
+      while (parent && parent !== scene) {
+        const pn = (parent.name || '').toUpperCase();
+        if (pn.startsWith('WHEEL_')) {
+          isTireByNode = true;
+          break;
+        }
+        parent = parent.parent;
+      }
+      if (isTireByMat || (isTireByNode && matName.includes('tire'))) {
         tireMeshes.push(o);
+        seen.add(o);
       }
     });
 
+    console.log(`[Car] Found ${tireMeshes.length} tire meshes for wheel rigging`);
     if (tireMeshes.length < 4) {
-      console.warn(`[Car] Found only ${tireMeshes.length} tire meshes (expected 4). ` +
-        'Wheel rigging may be incomplete.');
+      console.warn(`[Car] Expected 4 tire meshes, found ${tireMeshes.length}. ` +
+        'Trying broader search...');
+      // broader fallback: any mesh whose parent chain includes WHEEL_
+      scene.traverse((o) => {
+        if (!o.isMesh || !o.geometry || seen.has(o)) return;
+        let parent = o.parent;
+        while (parent && parent !== scene) {
+          const pn = (parent.name || '').toUpperCase();
+          if (pn.startsWith('WHEEL_') && o.geometry.attributes.position) {
+            // check if this mesh looks like a wheel (roughly cylindrical)
+            o.geometry.computeBoundingBox();
+            const bb = o.geometry.boundingBox;
+            if (bb) {
+              const size = bb.getSize(new THREE.Vector3());
+              // a wheel is wider in 2 dimensions than the 3rd (the axle)
+              const sorted = [size.x, size.y, size.z].sort((a, b) => a - b);
+              if (sorted[0] < sorted[1] * 0.6 && sorted[1] > 0.1) {
+                tireMeshes.push(o);
+                seen.add(o);
+                break;
+              }
+            }
+          }
+          parent = parent.parent;
+        }
+      });
+      console.log(`[Car] After broader search: ${tireMeshes.length} tire meshes`);
+    }
+
+    if (tireMeshes.length === 0) {
+      console.error('[Car] No tire meshes found! Wheels will not be rigged.');
+      return;
     }
 
     // ---- compute each tire's world-space center + radius ----------------
+    // Use getWorldPosition + getWorldQuaternion for robust world-space reads
     const tireData = tireMeshes.map((mesh) => {
-      const g = toFloat32Geometry(mesh.geometry);
-      g.applyMatrix4(mesh.matrixWorld);  // bake world transform into geometry
-      g.computeBoundingBox();
-      const bb = g.boundingBox;
-      const center = bb.getCenter(new THREE.Vector3());
-      const size = bb.getSize(new THREE.Vector3());
-      // wheel diameter = max of the two non-axle dimensions
-      // (the axle is the narrowest dimension = wheel width)
-      const radius = Math.max(size.y, size.z) / 2;
-      g.dispose();
-      return { mesh, center, size, radius, worldMatrix: mesh.matrixWorld.clone() };
+      // get the mesh's world position (this is the wheel hub center)
+      const worldPos = new THREE.Vector3();
+      mesh.getWorldPosition(worldPos);
+
+      // compute the mesh's local-space bbox to find the radius
+      mesh.geometry.computeBoundingBox();
+      const localBB = mesh.geometry.boundingBox;
+      const localSize = localBB.getSize(new THREE.Vector3());
+      // the axle is the narrowest dimension; diameter = max of the other two
+      const radius = Math.max(localSize.x, localSize.y, localSize.z) / 2;
+      // actually, the radius should be the max of the two NON-axle dims.
+      // But since we don't know which is the axle yet, take the max of all
+      // three and divide by 2 — for a cylinder this gives the diameter/2.
+      // For the Audi tires (0.299 x 0.729 x 0.729), max = 0.729, radius = 0.365.
+
+      // Also get the world-space bbox by transforming the local bbox corners
+      const worldCenter = worldPos.clone();
+      // if the geometry is offset from the mesh origin, adjust
+      const localCenter = localBB.getCenter(new THREE.Vector3());
+      if (localCenter.lengthSq() > 0.001) {
+        // geometry is offset from mesh origin — add the offset in world space
+        worldCenter.add(localCenter);
+      }
+
+      return { mesh, center: worldCenter, size: localSize, radius };
     });
 
     // ---- determine front/rear and left/right ----------------------------
-    // After the +90° Y wrap in _prepareExterior, the model's +X (original
-    // forward) becomes +Z (world forward). The wheel centers are in the
-    // scene's local space (pre-wrap), so +X = forward, +Y = up, +Z = right.
-    // We need to classify by the scene-local coordinates.
-    //
-    // Front vs rear: sort by X (forward axis in scene-local space)
-    // Left vs right: sort by Z (lateral axis in scene-local space)
-
-    // find the midpoints to split front/rear and left/right
+    // The wheel world positions are in the scene's local space (because
+    // this.model's -90° and scene's +90° rotations cancel). In this space:
+    //   +X = forward (nose), +Y = up, +Z = right
+    // (This is the glTF's original coordinate system before the Y wrap.)
     const xs = tireData.map(t => t.center.x).sort((a, b) => a - b);
     const zs = tireData.map(t => t.center.z).sort((a, b) => a - b);
     const xMid = (xs[0] + xs[xs.length - 1]) / 2;
     const zMid = (zs[0] + zs[zs.length - 1]) / 2;
 
-    // classify each tire
     for (const t of tireData) {
-      t.front = t.center.x > xMid;   // +X = front (nose)
-      t.left = t.center.z > zMid;    // +Z = left (after wrap, this becomes -X = left)
+      t.front = t.center.x > xMid;
+      t.left = t.center.z > zMid;
     }
 
     // ---- measure the canonical wheel radius -----------------------------
-    // Use the average of all tire radii
     this.wheelRadius = tireData.reduce((sum, t) => sum + t.radius, 0) / tireData.length;
     if (!this.wheelRadius || this.wheelRadius < 0.1) {
       this.wheelRadius = CAR.wheelRadius;
     }
+    console.log(`[Car] Wheel radius: ${this.wheelRadius.toFixed(3)} m`);
 
     // ---- compute the scene lift so wheels rest on y=0 -------------------
-    // The lowest tire center Y minus its radius = the lowest wheel bottom.
-    // Lift = -(lowest bottom) so the wheel bottoms sit at y=0.
     let lowestBottom = Infinity;
     for (const t of tireData) {
       const bottom = t.center.y - t.radius;
@@ -337,8 +397,16 @@ export class Car {
     }
     this._pendingLift = -lowestBottom;
     if (this.carRoot) this.carRoot.position.y = this._pendingLift;
+    console.log(`[Car] Scene lift: ${this._pendingLift.toFixed(3)} m`);
 
     // ---- rig each wheel: steer → susp → spin ----------------------------
+    // We need to convert the world-space center back to the scene's local
+    // space (because wheelRoot is added to scene, which has rotation +90°).
+    // Since this.model(-90°) * scene(+90°) = identity, the scene's local
+    // space equals the world space (when group is at origin). So we can
+    // use the world center directly.
+    const sceneInv = new THREE.Matrix4().copy(scene.matrixWorld).invert();
+
     for (const t of tireData) {
       const wheelRoot = new THREE.Group();
       const steer = new THREE.Group();
@@ -346,30 +414,45 @@ export class Car {
       const spin = new THREE.Group();
       wheelRoot.add(steer); steer.add(susp); susp.add(spin);
 
-      // place the wheel root at the tire's world center
-      wheelRoot.position.copy(t.center);
+      // Convert the world-space center to scene-local space
+      const localCenter = t.center.clone().applyMatrix4(sceneInv);
+      wheelRoot.position.copy(localCenter);
 
-      // re-parent the tire mesh under the spin group, offsetting so the
-      // mesh's center sits at the spin group's origin
-      const meshWorldPos = new THREE.Vector3().setFromMatrixPosition(t.mesh.matrixWorld);
-      t.mesh.parent.remove(t.mesh);
+      // Re-parent the tire mesh under the spin group. The mesh's geometry
+      // is in its own local space (centered at origin for the Audi tires),
+      // so we just reset its transform and let the spin group's position
+      // handle the placement.
+      if (t.mesh.parent) t.mesh.parent.remove(t.mesh);
       spin.add(t.mesh);
-      // position the mesh so its geometry center is at the wheel root
-      t.mesh.position.copy(t.center).sub(meshWorldPos);
+      t.mesh.position.set(0, 0, 0);
       t.mesh.quaternion.identity();
       t.mesh.scale.set(1, 1, 1);
 
       scene.add(wheelRoot);
 
+      // Determine the spin axis: the axle is the narrowest dimension of
+      // the tire bbox. For the Audi, the tire is 0.299 (X) x 0.729 (Y) x
+      // 0.729 (Z), so the axle is X → spin around X.
+      const sortedDims = [
+        { axis: 'x', val: t.size.x },
+        { axis: 'y', val: t.size.y },
+        { axis: 'z', val: t.size.z }
+      ].sort((a, b) => a.val - b.val);
+      const spinAxis = sortedDims[0].axis;
+
       this.wheels.push({
         steerGroup: steer,
         suspGroup: susp,
         spinGroup: spin,
-        spinAxis: 'x',       // axle along X in scene space
+        spinAxis: spinAxis,
         front: t.front,
         side: t.left ? 1 : -1,
-        hubLocal: t.center.clone()
+        hubLocal: localCenter.clone()
       });
+
+      console.log(`[Car] Wheel: ${t.front ? 'F' : 'R'}${t.left ? 'L' : 'R'} ` +
+        `pos=(${localCenter.x.toFixed(2)}, ${localCenter.y.toFixed(2)}, ${localCenter.z.toFixed(2)}) ` +
+        `spinAxis=${spinAxis}`);
     }
 
     // ---- sort wheels FL, FR, RL, RR to match phys.suspSmooth indices ----
