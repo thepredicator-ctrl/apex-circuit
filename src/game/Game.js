@@ -18,9 +18,7 @@ import { RaceSystem, formatTime } from './Race.js';
 import { Settings } from './Settings.js';
 import { HUD } from '../ui/HUD.js';
 import { TouchControls } from '../ui/TouchControls.js';
-import { AssetManager } from './AssetManager.js';
 import { QUALITY, WORLD, CAR } from './Constants.js';
-import { loadGLB } from './ModelKit.js';
 
 const PHYS_STEP = 1 / 120;
 
@@ -175,193 +173,31 @@ export class Game {
     this.hud.setCockpitMode(this.settings.camera === 'cockpit');
   }
 
-  /** Load the GLB assets (car/track/trees/bushes) and dress the world. */
+  /** Build everything procedurally — no GLB assets are loaded. */
   async _loadAssets() {
     const progress = (frac, label) => {
       if (this.onProgress) this.onProgress(frac, label);
     };
     try {
-      // ---- asset manager (validates + normalizes every asset) ------------
-      this.assets = new AssetManager();
+      // ---- car (fully procedural — no GLB) -------------------------------
+      progress(0.05, 'BUILDING CAR…');
+      await this.car.build((t) => progress(0.05 + t * 0.50, 'BUILDING CAR…'));
 
-      // ---- car (uses the existing car.build which loads porsche_911.glb) ----
-      progress(0.02, 'LOADING AUDI RS6…');
-      await this.car.build((t) => progress(0.02 + t * 0.60, 'LOADING AUDI RS6…'));
+      // ---- track + environment (already procedural in Track.js) ---------
+      // The Track constructor already builds: road, curbs, walls, tire
+      // stacks, grandstands, start/finish gantry, procedural trees, bushes,
+      // rocks, signs, fences, mountains, clouds. Nothing to load.
+      progress(0.70, 'BUILDING ENVIRONMENT…');
 
-      // ---- track: use the PROCEDURAL track (physics-aligned) -------------
-      // The GLB track (drift_race_track_free.glb) has a completely different
-      // layout from the procedural Track.js spline that drives physics. Using
-      // both at once means the car drives on an invisible road while the
-      // visible GLB track is elsewhere — which looks broken.
-      //
-      // For now we use ONLY the procedural track (which the car physics is
-      // aligned with). The GLB track can be integrated later by extracting
-      // its centerline and rebuilding the physics spline to match.
-      //
-      // The procedural track already has: asphalt, curbs, walls, tire stacks,
-      // signs, fences, trees, grandstands, start/finish gantry, etc.
-      progress(0.35, 'BUILDING TRACK…');
-
-      // ---- environment: trees + bushes (instanced) -----------------------
-      progress(0.72, 'PLANTING THE FOREST…');
-      try {
-        await this.assets.load('tree',
-          (t) => progress(0.72 + t * 0.10, 'LOADING TREES…'));
-        await this.assets.load('bushSmall',
-          (t) => progress(0.82 + t * 0.05, 'LOADING BUSHES…'));
-        // bushLarge is 129k tris — only load on desktop, use sparingly
-        if (!this.isMobile && !this.isIPad) {
-          await this.assets.load('bushLarge',
-            (t) => progress(0.87 + t * 0.05, 'LOADING SCENERY…'));
-        }
-        // build the instanced environment
-        this._buildEnvironment();
-      } catch (err) {
-        console.warn('[ApexCircuit] Environment models failed, using procedural fallback:', err);
-        this.track.buildTrees(null, this.isMobile);
-      }
-
+      // ---- reapply camera mode once the car is ready --------------------
+      this._reapplyCameraWhenReady();
       progress(1, 'READY');
     } catch (err) {
-      console.error('[ApexCircuit] Asset loading failed:', err);
-      // fall back to the procedural forest so the game still works
-      this.track.buildTrees(null, this.isMobile);
+      console.error('[ApexCircuit] Setup failed:', err);
       if (this.onError) this.onError(err instanceof Error ? err : new Error(String(err)));
       return;
     }
-    // The car is rigged (with the fallback cockpit anchor since we skipped
-    // the Interior GLB). Reapply the persisted camera mode if the user had
-    // selected 'cockpit' — it now silently maps to 'hood'.
-    this._reapplyCameraWhenReady();
     this.state = 'idle';
-  }
-
-  /**
-   * Build the instanced environment: trees + bushes scattered around the
-   * track using deterministic randomization (same every run). Uses the
-   * AssetManager's createInstancedFromGLB to merge each model into a single
-   * InstancedMesh for efficient rendering.
-   */
-  _buildEnvironment() {
-    const N = this.track.sampleCount;
-    const half = this.track.roadHalfWidth;
-
-    // ---- deterministic PRNG (same seed every run) -----------------------
-    let seed = 1337;
-    const rnd = () => {
-      seed = (seed * 1664525 + 1013904223) >>> 0;
-      return seed / 4294967296;
-    };
-
-    // ---- tree positions: scattered in the grass, avoiding the racing line
-    const treePositions = [];
-    const treeCount = this.isMobile ? 30 : (this.isIPad ? 50 : 80);
-    for (let i = 0; i < treeCount; i++) {
-      const s = rnd();  // progress around track
-      const idx = Math.floor(s * N) % N;
-      const side = rnd() < 0.5 ? 1 : -1;
-      const dist = half + 8 + rnd() * 40;  // 8-48 m from centerline
-      const x = this.track.px[idx] + this.track.rightX[idx] * dist * side;
-      const z = this.track.pz[idx] + this.track.rightZ[idx] * dist * side;
-      treePositions.push({ x, z, scale: 0.25 + rnd() * 0.35, rot: rnd() * Math.PI * 2 });
-    }
-
-    // ---- bush positions: denser, closer to the track --------------------
-    const bushPositions = [];
-    const bushCount = this.isMobile ? 40 : (this.isIPad ? 80 : 120);
-    for (let i = 0; i < bushCount; i++) {
-      const s = rnd();
-      const idx = Math.floor(s * N) % N;
-      const side = rnd() < 0.5 ? 1 : -1;
-      const dist = half + 3 + rnd() * 15;  // 3-18 m from centerline
-      const x = this.track.px[idx] + this.track.rightX[idx] * dist * side;
-      const z = this.track.pz[idx] + this.track.rightZ[idx] * dist * side;
-      bushPositions.push({ x, z, scale: 0.5 + rnd() * 0.8, rot: rnd() * Math.PI * 2 });
-    }
-
-    // ---- create instanced meshes -----------------------------------------
-    const dummy = new THREE.Object3D();
-
-    // Trees
-    if (this.assets.cache.has('tree')) {
-      try {
-        const { mesh: treeMesh } = this.assets.createInstancedFromGLB('tree', treePositions.length);
-        treePositions.forEach((p, i) => {
-          const y = this.track.heightAtWorld(p.x, p.z);
-          dummy.position.set(p.x, y, p.z);
-          dummy.scale.setScalar(p.scale);
-          dummy.rotation.y = p.rot;
-          dummy.updateMatrix();
-          treeMesh.setMatrixAt(i, dummy.matrix);
-        });
-        treeMesh.count = treePositions.length;
-        treeMesh.instanceMatrix.needsUpdate = true;
-        // trees are big — cast shadows on desktop only
-        treeMesh.castShadow = !this.isMobile;
-        this.scene.add(treeMesh);
-      } catch (err) {
-        console.warn('[ApexCircuit] Tree instancing failed:', err);
-      }
-    }
-
-    // Small bushes (plant_bush.glb — 756 tris, very light)
-    if (this.assets.cache.has('bushSmall')) {
-      try {
-        const { mesh: bushMesh } = this.assets.createInstancedFromGLB('bushSmall', bushPositions.length);
-        bushPositions.forEach((p, i) => {
-          const y = this.track.heightAtWorld(p.x, p.z);
-          dummy.position.set(p.x, y, p.z);
-          dummy.scale.setScalar(p.scale);
-          dummy.rotation.y = p.rot;
-          dummy.updateMatrix();
-          bushMesh.setMatrixAt(i, dummy.matrix);
-        });
-        bushMesh.count = bushPositions.length;
-        bushMesh.instanceMatrix.needsUpdate = true;
-        bushMesh.castShadow = false;  // too small for shadows
-        bushMesh.receiveShadow = true;
-        this.scene.add(bushMesh);
-      } catch (err) {
-        console.warn('[ApexCircuit] Bush instancing failed:', err);
-      }
-    }
-
-    // Large bushes (bush.glb — 129k tris, desktop only, few instances)
-    if (this.assets.cache.has('bushLarge') && !this.isMobile && !this.isIPad) {
-      try {
-        const largeCount = 15;
-        const largePositions = [];
-        for (let i = 0; i < largeCount; i++) {
-          const s = rnd();
-          const idx = Math.floor(s * N) % N;
-          const side = rnd() < 0.5 ? 1 : -1;
-          const dist = half + 15 + rnd() * 30;
-          const x = this.track.px[idx] + this.track.rightX[idx] * dist * side;
-          const z = this.track.pz[idx] + this.track.rightZ[idx] * dist * side;
-          largePositions.push({ x, z, scale: 0.8 + rnd() * 0.6, rot: rnd() * Math.PI * 2 });
-        }
-        const { mesh: largeBushMesh } = this.assets.createInstancedFromGLB('bushLarge', largeCount);
-        largePositions.forEach((p, i) => {
-          const y = this.track.heightAtWorld(p.x, p.z);
-          dummy.position.set(p.x, y, p.z);
-          dummy.scale.setScalar(p.scale);
-          dummy.rotation.y = p.rot;
-          dummy.updateMatrix();
-          largeBushMesh.setMatrixAt(i, dummy.matrix);
-        });
-        largeBushMesh.count = largeCount;
-        largeBushMesh.instanceMatrix.needsUpdate = true;
-        largeBushMesh.castShadow = true;
-        this.scene.add(largeBushMesh);
-      } catch (err) {
-        console.warn('[ApexCircuit] Large bush instancing failed:', err);
-      }
-    }
-
-    // Note: we do NOT call this.track.buildTrees() here — the GLB trees/bushes
-    // above replace the procedural trees. The procedural trackside details
-    // (curbs, walls, tire stacks, signs, fences, rocks) were already built
-    // in the Track constructor and remain visible.
   }
 
   _wireInput() {

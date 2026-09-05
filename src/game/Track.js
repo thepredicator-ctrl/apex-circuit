@@ -120,10 +120,11 @@ export class Track {
     this._buildBoards();
     this._buildLightPoles();
     this._buildTireStacks();
-    this._buildBushes();          // NEW: low bushes scattered in the grass
-    this._buildRocks();           // NEW: rocks of varying sizes
-    this._buildDistanceSigns();   // NEW: roadside distance/corner signs
-    this._buildFence();           // NEW: chain-link fence along straights
+    this._buildProceduralTrees();  // trees (instanced, varied scale/color)
+    this._buildBushes();           // low bushes scattered in the grass
+    this._buildRocks();            // rocks of varying sizes
+    this._buildDistanceSigns();    // roadside distance/corner signs
+    this._buildFence();            // chain-link fence along straights
     this._buildMountains();
     this._buildClouds();
     // References to the procedural surface meshes so they can be hidden
