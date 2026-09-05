@@ -38,83 +38,80 @@ export const HEADLIGHTS = {
 };
 
 export const CAR = {
-  mass: 2025,               // kg — Audi RS6 Avant (was 1180 for Porsche 911)
-  wheelbase: 2.93,          // m — RS6 wheelbase (was 2.96)
-  cgHeight: 0.50,           // m — taller car (wagon body) = higher CG
-  weightDistFront: 0.55,    // RS6 is nose-heavy ~55/45 F/R (was 0.42 for rear-engine 911)
-  wheelRadius: 0.365,       // m — RS6 22" wheels (was 0.34)
+  mass: 1450,               // kg — mid-size sedan
+  wheelbase: 2.7,           // m
+  cgHeight: 0.55,           // m — taller sedan = higher CG = more roll
+  weightDistFront: 0.58,    // nose-heavy FWD layout
+  wheelRadius: 0.33,        // m — 17" wheels
 
-  maxSpeed: 70,             // m/s (~250 km/h, limited)
-  maxReverseSpeed: 11,
-  brakeDecel: 28,           // m/s^2 at full load
+  maxSpeed: 62,             // m/s (~220 km/h)
+  maxReverseSpeed: 12,
+  brakeDecel: 26,           // m/s^2
   rollingResistance: 0.35,
-  airDrag: 0.00042,
-  downforce: 1.2,           // wagon body = less downforce than a low sports car
+  airDrag: 0.00045,
+  downforce: 0.6,           // sedan = minimal downforce
 
-  // lateral grip — planted feel
-  gripAsphalt: 1.30,        // RS6 has wide performance tires
-  gripGrass: 0.45,
-  handbrakeRearGrip: 0.28,
-  powerOversteerFactor: 0.82, // AWD = less power oversteer than RWD 911
-  highSteerGripFactor: 0.88,
-  lateralDamp: 1.4,
-  yawDamping: 7.0,
+  // lateral grip — moderate, breakable for fun slides
+  gripAsphalt: 1.05,        // modest street tires
+  gripGrass: 0.40,
+  handbrakeRearGrip: 0.25,
+  powerOversteerFactor: 0.70,
+  highSteerGripFactor: 0.80,
+  lateralDamp: 1.6,
+  yawDamping: 5.5,          // less damped = more rotational feel
 
-  // yaw rate limits — RS6 is heavier, turns less sharply than a 911
-  maxYawLowSpeed: 1.75,     // was 1.85 — slightly less rotation for the heavier car
-  yawGripMultiplier: 0.98,  // was 0.96 — more responsive (AWD helps rotation)
-  minSteerSpeed: 1.4,
+  // INSANE turning — way more yaw authority than realistic
+  maxYawLowSpeed: 3.2,      // was 1.75 — nearly twice the rotation rate
+  yawGripMultiplier: 1.15,  // was 0.98 — over-rotate past the grip circle
+  minSteerSpeed: 1.0,       // earlier steering response
 
   grassDrag: 6.5,
 
   // collision
   wallOffset: 3.4,
-  carHalfWidth: 0.98,       // RS6 is wider (1.95m vs 1.85m for 911)
-  wallBounce: 0.20,
-  wallSpeedScrub: 0.82
+  carHalfWidth: 0.92,
+  wallBounce: 0.25,
+  wallSpeedScrub: 0.85
 };
 
 /**
- * Transmission / engine. Torque flows:
- *   Fwheel = torque(rpm) * gearRatio * finalDrive * 0.9 / wheelRadius
- * rpm = vF / wheelRadius * gearRatio * finalDrive * 60 / (2 pi)
+ * Transmission / engine — mid-size sedan naturally aspirated 2.5L 4-cyl.
  */
 export const TRANSMISSION = {
-  idleRpm: 700,
-  redline: 6800,           // RS6 V8 redline (~6800 rpm)
-  rpmMaxSafe: 7200,
-  peakTorqueRpm: 3500,     // twin-turbo V8 peaks low
-  maxTorque: 800,          // Nm — RS6 4.0TT V8 (was 420 for Porsche flat-six)
-  efficiency: 0.92,        // AWD drivetrain
-  gearRatios: [4.71, 3.14, 2.31, 1.81, 1.46, 1.23, 1.02, 0.84], // 8-speed ZF
-  reverseRatio: 3.32,
-  finalDrive: 3.56,
+  idleRpm: 750,
+  redline: 6500,
+  rpmMaxSafe: 6800,
+  peakTorqueRpm: 4000,
+  maxTorque: 250,           // Nm — modest 4-cyl
+  efficiency: 0.88,
+  gearRatios: [3.62, 2.04, 1.34, 0.97, 0.78],  // 5-speed manual
+  reverseRatio: 3.31,
+  finalDrive: 3.94,
 
-  autoUpshiftRpm: 6400,
+  autoUpshiftRpm: 6000,
   autoDownshiftRpm: 2200,
   autoDownshiftThrottle: 0.65,
-  shiftTime: 0.18,         // ZF 8-speed shifts fast
+  shiftTime: 0.20,
   shiftRpmEase: 9,
-  clutchLockSpeed: 5.5,
-  clutchGrip: 38,          // more clutch capacity for the heavier car
+  clutchLockSpeed: 5.0,
+  clutchGrip: 28,
   stallRpm: 500
 };
 
 export const SUSPENSION = {
-  travel: 0.11,              // m of visual wheel travel (was 0.085 — more visible)
-  // per-wheel compression inputs (fractions of travel), targets are damped
-  rate: 9,                   // spring responsiveness (damp constant)
-  bumpCurbAmp: 0.55,         // curb rumble amplitude (fraction of travel)
-  bumpCurbFreq: 46,
-  accelPitch: 0.035,         // was 0.02 — more visible pitch on accel/brake
-  rollG: 0.05,               // was 0.032 — more visible body roll in corners
-  maxRoll: 0.085,            // was 0.06 — allow more roll for sim feel
-  maxPitch: 0.07             // was 0.05 — allow more pitch
+  travel: 0.28,             // INSANE — was 0.11. 28cm of wheel travel!
+  rate: 6,                  // softer spring = more bounce
+  bumpCurbAmp: 0.8,         // huge curb rumble
+  bumpCurbFreq: 40,
+  accelPitch: 0.08,         // was 0.035 — huge pitch on accel/brake
+  rollG: 0.09,              // was 0.05 — huge body roll
+  maxRoll: 0.18,            // was 0.085 — allow 10° of roll
+  maxPitch: 0.15            // was 0.07 — allow 8.5° of pitch
 };
 
 export const TRACK = {
   roadHalfWidth: 7,
-  sampleCount: 1000,
+  sampleCount: 200,
   checkpoints: [0.3, 0.62, 0.85], // progress s of the 3 gates
   totalLaps: 3
 };
