@@ -29,6 +29,7 @@
 import * as THREE from 'three';
 import { CAR, SUSPENSION, HEADLIGHTS, PAINTS } from './Constants.js';
 import { loadGLB, toFloat32Geometry, keepTriangles, stripExtras } from './ModelKit.js';
+import { Interior } from './Interior.js';
 
 export class Car {
   constructor(track = null) {
@@ -80,7 +81,15 @@ export class Car {
     this._rigWheelsFromMaterials(carScene);
     this._buildLights();
 
-    // fallback cockpit anchor (the hood cam doesn't need a real interior)
+    // ---- interior rig: steering wheel + instrument cluster + cockpit anchor
+    this.interior = new Interior(this);
+    this.interior.build(carScene);
+    // the interior's cockpitAnchor replaces the fallback one
+    if (this.interior.cockpitAnchor) {
+      this.cockpitAnchor = this.interior.cockpitAnchor;
+    }
+
+    // fallback cockpit anchor (kept for backwards-compat)
     this._buildFallbackCockpit();
 
     this.ready = true;
@@ -583,5 +592,10 @@ export class Car {
     // ---- lights -------------------------------------------------------------
     const braking = phys.brakeOut > 0.15 && phys.vF > 0.4;
     if (this.tailGlowMat) this.tailGlowMat.opacity = braking ? 0.75 : 0.26;
+
+    // ---- interior: steering wheel rotation + instrument cluster needles --
+    if (this.interior) {
+      this.interior.update(dt, phys, trans);
+    }
   }
 }

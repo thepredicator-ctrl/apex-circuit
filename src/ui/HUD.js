@@ -72,6 +72,7 @@ const TEMPLATE = `
       <div class="settings-seg" id="set-cam">
         <button data-v="chase" type="button">CHASE</button>
         <button data-v="hood" type="button">HOOD</button>
+        <button data-v="cockpit" type="button">COCKPIT</button>
       </div>
     </div>
     <div class="settings-row">
@@ -184,9 +185,7 @@ export class HUD {
       seg.querySelectorAll('button').forEach((x) => x.classList.toggle('on', x.dataset.v === v));
     };
     mark('set-trans', data.transmission);
-    // Legacy 'cockpit' setting maps to 'hood' in the UI
-    const camVal = (data.camera === 'cockpit') ? 'hood' : data.camera;
-    mark('set-cam', camVal);
+    mark('set-cam', data.camera);
     mark('set-quality', data.quality);
     if (data.paint) mark('set-paint', data.paint);
     document.getElementById('set-master').value = data.masterVolume;
@@ -222,9 +221,8 @@ export class HUD {
   setModes(trans, cam) {
     this.el.modeTrans.textContent = trans === 'manual' ? 'MANUAL' : 'AUTO';
     this.el.modeTrans.classList.toggle('manual', trans === 'manual');
-    // 'hood' or legacy 'cockpit' (mapped to hood in the camera rig)
-    const isHood = cam === 'hood' || cam === 'cockpit';
-    this.el.modeCam.textContent = isHood ? 'HOOD' : 'CHASE';
+    const camLabel = cam === 'cockpit' ? 'COCKPIT' : cam === 'hood' ? 'HOOD' : 'CHASE';
+    this.el.modeCam.textContent = camLabel;
   }
 
   update(phys, race, trans) {
