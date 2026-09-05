@@ -31,7 +31,7 @@ const _tmp = new THREE.Vector3();
 export class CameraRig {
   constructor(camera) {
     this.camera = camera;
-    this.mode = 'chase';              // 'chase' | 'hood'
+    this.mode = 'chase';              // 'chase' | 'hood' | 'cockpit'
     this.curPos = new THREE.Vector3();
     this.curLook = new THREE.Vector3();
     this.roll = 0;
@@ -56,15 +56,15 @@ export class CameraRig {
   }
 
   setMode(mode, car, phys) {
-    // Backwards-compat: persisted 'cockpit' setting maps to 'hood' now
-    // that the interior view is removed.
-    if (mode === 'cockpit') mode = 'hood';
-    if (mode !== 'chase' && mode !== 'hood') return;
+    if (mode !== 'chase' && mode !== 'hood' && mode !== 'cockpit') return;
     this.mode = mode;
     this._first = true;
     if (this.mode === 'hood') {
       this.camera.near = 0.1;
       this.camera.fov = CAMERA.hoodFov;
+    } else if (this.mode === 'cockpit') {
+      this.camera.near = 0.05;        // very close near plane for interior
+      this.camera.fov = CAMERA.cockpitFov || 72;
     } else {
       this.camera.near = 0.3;
       this.camera.fov = CAMERA.fovBase;
@@ -74,18 +74,22 @@ export class CameraRig {
   }
 
   toggle(car, phys) {
-    this.setMode(this.mode === 'chase' ? 'hood' : 'chase', car, phys);
+    // cycle: chase -> hood -> cockpit -> chase
+    const next = this.mode === 'chase' ? 'hood'
+               : this.mode === 'hood' ? 'cockpit'
+               : 'chase';
+    this.setMode(next, car, phys);
   }
 
   /**
    * Jump instantly to the correct pose (race start / reset / mode switch).
-   * No cockpit anchor is needed anymore — the hood cam reads only the
-   * car's body position + heading.
    */
   snap(car, phys) {
     this._first = true;
     if (this.mode === 'hood') {
       this._hoodDesired(phys, this.curPos, this.curLook);
+    } else if (this.mode === 'cockpit') {
+      this._cockpitDesired(phys, car, this.curPos, this.curLook);
     } else {
       this._snapChase(phys);
     }
@@ -169,10 +173,45 @@ export class CameraRig {
     outLook.y = outPos.y + phys.roadPitch * 8 + 0.05;
   }
 
+  /**
+   * Cockpit (driver) camera — sits at the driver's head position using the
+   * car's cockpitAnchor (rigged by Interior.js to the steering wheel node).
+   * Looks forward through the windshield. Rides the body so suspension,
+   * banking and bumps all move the view.
+   */
+  _cockpitDesired(phys, car, outPos, outLook) {
+    const fwd = _fwd.set(Math.sin(phys.heading), 0, Math.cos(phys.heading));
+    const right = _right.set(-fwd.z, 0, fwd.x);
+
+    // get the cockpit anchor's world position (set by Interior.js to the
+    // driver's head position, just behind the steering wheel)
+    if (car && car.cockpitAnchor) {
+      car.cockpitAnchor.getWorldPosition(outPos);
+    } else {
+      // fallback: reasonable driver position
+      outPos.copy(phys.position)
+        .addScaledVector(fwd, -0.3)
+        .add(new THREE.Vector3(0, 1.15, 0));
+    }
+
+    // small counter-inertia head movement (not nausea-inducing)
+    const aN = THREE.MathUtils.clamp(phys.aLongS / 9, -1, 1);
+    outPos.y += -aN * 0.03;   // 3 cm dip under braking
+    outPos.addScaledVector(right, phys.latAccel * 0.0015);  // tiny lean
+
+    // look forward along the heading, slightly into the steering
+    outLook.copy(outPos)
+      .addScaledVector(fwd, 20)   // look 20 m ahead
+      .addScaledVector(right, phys.steerAngle / 0.5 * 1.2);
+    outLook.y = outPos.y + phys.roadPitch * 6 - 0.05;  // slightly down
+  }
+
   update(dt, phys, inputState, car) {
     this._t += dt;
     if (this.mode === 'hood') {
       this._updateHood(dt, phys);
+    } else if (this.mode === 'cockpit') {
+      this._updateCockpit(dt, phys, car);
     } else {
       this._updateChase(dt, phys, inputState);
     }
@@ -267,14 +306,60 @@ export class CameraRig {
       - this._brakePush * 1.5;
   }
 
+  _updateCockpit(dt, phys, car) {
+    // cockpit cam needs the car's cockpitAnchor for position
+    this._cockpitDesired(phys, car, _desired, _look);
+
+    // very tight follow — the camera IS the driver's head
+    const kPos = 1 - Math.exp(-16 * this.smoothing * dt);
+    const kLook = 1 - Math.exp(-18 * this.smoothing * dt);
+    if (this._first) {
+      this.curPos.copy(_desired);
+      this.curLook.copy(_look);
+      this._first = false;
+    } else {
+      this.curPos.lerp(_desired, kPos);
+      this.curLook.lerp(_look, kLook);
+    }
+
+    // speed-feel state (for impact shake)
+    const vAbs = Math.abs(phys.vF);
+    const dv = vAbs - this._lastVFAbs;
+    this._lastVFAbs = vAbs;
+    if (dv > 0.15) this._accelPunch = Math.min(1, this._accelPunch + dv * 0.5);
+    if (dv < -0.15) this._brakePush = Math.min(1, this._brakePush + (-dv) * 0.4);
+    this._accelPunch = THREE.MathUtils.damp(this._accelPunch, 0, 3, dt);
+    this._brakePush = THREE.MathUtils.damp(this._brakePush, 0, 4, dt);
+    this._impactShake = THREE.MathUtils.damp(this._impactShake, 0, 5, dt);
+
+    // roll with the car body (more pronounced in cockpit — you feel it)
+    const targetRoll = phys.roadRoll * 0.8 +
+      THREE.MathUtils.clamp(-phys.latAccel * 0.0012, -0.035, 0.035);
+    this.roll = THREE.MathUtils.damp(this.roll, targetRoll, 5, dt);
+
+    // cockpit FOV widens slightly with speed + accel punch
+    const speedN = Math.min(1, Math.abs(phys.vF) / CAR.maxSpeed);
+    this.fov = (CAMERA.cockpitFov || 72)
+      + (CAMERA.cockpitFovBoost || 8) * Math.pow(speedN, 1.2)
+      + this._accelPunch * 3.0
+      - this._brakePush * 1.5;
+  }
+
   apply(phys) {
     this.camera.position.copy(this.curPos);
 
     // high-speed shake: smooth pseudo-noise, scales with speed²
     const sN = Math.min(1, Math.abs(phys.vF) / CAR.maxSpeed);
-    const amp = this.mode === 'chase'
-      ? CAMERA.chaseShake * Math.pow(sN, 2.2)
-      : CAMERA.hoodShake * (0.25 + Math.pow(sN, 2));
+    // cockpit shake is subtle (you're inside the car, less vibration)
+    let baseShake;
+    if (this.mode === 'chase') {
+      baseShake = CAMERA.chaseShake * Math.pow(sN, 2.2);
+    } else if (this.mode === 'cockpit') {
+      baseShake = (CAMERA.cockpitShake || 0.015) * (0.3 + Math.pow(sN, 2));
+    } else {
+      baseShake = CAMERA.hoodShake * (0.25 + Math.pow(sN, 2));
+    }
+    const amp = baseShake;
     // impact shake adds a stronger, faster decaying vibration
     const impactAmp = this._impactShake * 0.15;
     const totalAmp = amp + impactAmp;

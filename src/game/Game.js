@@ -516,13 +516,17 @@ export class Game {
 
   toggleCamera() {
     if (this.hud.settingsOpen) return;
-    // toggle between 'chase' and 'hood'. 'cockpit' is the legacy persisted
-    // value from older builds — it's mapped to 'hood' in CameraRig.setMode,
-    // so we treat it as 'hood' for the toggle logic.
-    const isHood = this.settings.camera === 'hood' || this.settings.camera === 'cockpit';
-    const next = isHood ? 'chase' : 'hood';
+    // cycle: chase -> hood -> cockpit -> chase
+    const cur = this.settings.camera;
+    let next;
+    if (cur === 'chase') next = 'hood';
+    else if (cur === 'hood') next = 'cockpit';
+    else next = 'chase';
     this.changeSetting('camera', next);
-    this.hud.showLapToast(next === 'hood' ? 'HOOD VIEW' : 'CHASE VIEW');
+    const label = next === 'chase' ? 'CHASE VIEW'
+                : next === 'hood' ? 'HOOD VIEW'
+                : 'COCKPIT VIEW';
+    this.hud.showLapToast(label);
   }
 
   toggleTransmission() {

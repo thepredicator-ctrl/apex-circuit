@@ -143,7 +143,11 @@ export const CAMERA = {
   hoodLookAhead: 25,        // m forward to look
   hoodDamping: 14,          // tight follow — feels like you're in the car
   hoodLookDamping: 16,
-  hoodShake: 0.022          // cabin vibration amplitude
+  hoodShake: 0.022,         // cabin vibration amplitude
+  // --- cockpit (driver view) -----------------------------------------------
+  cockpitFov: 72,
+  cockpitFovBoost: 8,       // cockpit FOV widens slightly with speed
+  cockpitShake: 0.015       // subtle vibration inside the cabin
 };
 
 /** Graphics quality presets. */
