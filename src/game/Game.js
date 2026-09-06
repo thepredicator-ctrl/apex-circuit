@@ -219,7 +219,9 @@ export class Game {
     this.hud.setCockpitMode(this.settings.camera === 'cockpit');
   }
 
-  /** Load the GLB car + prime streaming */
+  /** Load the GLB car + prime streaming. Car failure is never fatal —
+   *  Car.build() already falls back to a procedural coupe; this guards the
+   *  last-resort path so the world ALWAYS boots. */
   async _loadAssets() {
     const progress = (frac, label) => {
       if (this.onProgress) this.onProgress(frac, label);
@@ -227,17 +229,23 @@ export class Game {
     try {
       progress(0.05, 'LOADING CAR…');
       await this.car.build((t) => progress(0.05 + t * 0.8, 'LOADING CAR…'));
-      this.car.setPaint(this.settings.paint);
-      progress(0.9, 'STREAMING WORLD…');
-      // let a few frames of chunk streaming happen before revealing
-      await new Promise((r) => setTimeout(r, 120));
-      progress(1, 'READY');
-      this._reapplyCameraWhenReady();
     } catch (err) {
-      console.error('[ApexRoads] Setup failed:', err);
-      if (this.onError) this.onError(err instanceof Error ? err : new Error(String(err)));
-      return;
+      console.error('[ApexRoads] car build failed — emergency fallback:', err);
+      try {
+        await this.car.buildFallbackOnly();
+      } catch (err2) {
+        console.error('[ApexRoads] fallback car failed too (world stays drivable):', err2);
+        this.car.ready = true; // visuals off, physics still drives
+      }
     }
+    try {
+      this.car.setPaint(this.settings.paint);
+    } catch { /* cosmetic only */ }
+    progress(0.9, 'STREAMING WORLD…');
+    // let a few frames of chunk streaming happen before revealing
+    await new Promise((r) => setTimeout(r, 120));
+    progress(1, 'READY');
+    this._reapplyCameraWhenReady();
     this.state = 'idle';
   }
 

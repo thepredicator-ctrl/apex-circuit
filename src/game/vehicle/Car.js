@@ -1,31 +1,40 @@
 /**
  * Car — the player's vehicle: the CARRERA GLB sports coupe.
  *
- * The model ships with separate wheel assemblies (brakes → rim → tyre),
- * doors, mirrors, spoiler, steering wheel and lamp meshes. At load time we:
- *   - normalize orientation (nose = +Z, up = +Y) and scale (~4.35 m length)
- *   - drop to the ground plane so the tyres touch y = 0
- *   - wrap each wheel in susp → steer → spin pivots (centered on the wheel
- *     bounding box) so suspension travel, steering and rolling all read
- *     correctly
- *   - wire headlight spotlights + emissive lamp materials for night driving
- *   - expose a cockpit anchor for the cockpit camera
+ * Resilience contract (the game must NEVER fail to boot because of the
+ * model): build() tries the GLB three times (relative URL, so it works on
+ * root hosts and GitHub-Pages-style subpaths alike) and, if the fetch or
+ * the rigging still fails, falls back to a fully procedural sculpted coupe
+ * built from Three.js primitives. Both paths produce the same public
+ * surface: this.wheels[] with susp → steer → spin pivots, mats.paint /
+ * mats.tail / mats.headlamp, headlight spotlights, cockpit anchor.
  *
- * The proven suspension/body-motion layer (roll, pitch, per-wheel travel,
- * brake-reactive lights) from the previous sedan is preserved on top.
+ * Visual feedback layer (roll, pitch, per-wheel travel, brake-reactive
+ * lights, headlight toggle) is shared by both model sources.
  */
 
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { CAR, SUSPENSION, HEADLIGHTS, PAINTS } from '../core/Constants.js';
 
-const MODEL_URL = '/models/cartoon_sports_car.glb';
 const TARGET_LENGTH = 4.35;
+
+/** Resolve the model URL against the document base so subpath hosts work. */
+function modelURL() {
+  try {
+    return new URL('models/cartoon_sports_car.glb', document.baseURI).href;
+  } catch {
+    return '/models/cartoon_sports_car.glb';
+  }
+}
+
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 export class Car {
   constructor(world = null) {
     this.track = world;
     this.ready = false;
+    this.modelSource = null;   // 'glb' | 'procedural'
 
     this.group = new THREE.Group();
     this.body = new THREE.Group();
@@ -46,18 +55,64 @@ export class Car {
     this.headlightsTarget = true;
   }
 
-  async build(onProgress) {
-    const gltf = await new Promise((resolve, reject) => {
-      const loader = new GLTFLoader();
-      loader.load(MODEL_URL,
-        (g) => resolve(g),
-        (evt) => {
-          if (onProgress && evt.total) onProgress(Math.min(0.98, evt.loaded / evt.total));
-        },
-        (err) => reject(err)
-      );
-    });
+  // ================================================================ build
 
+  async build(onProgress) {
+    let gltf = null;
+    let lastErr = null;
+    for (let attempt = 1; attempt <= 3 && !gltf; attempt++) {
+      try {
+        gltf = await new Promise((resolve, reject) => {
+          const loader = new GLTFLoader();
+          loader.load(modelURL(),
+            (g) => resolve(g),
+            (evt) => {
+              if (onProgress && evt.total) onProgress(Math.min(0.98, evt.loaded / evt.total));
+            },
+            (err) => reject(err)
+          );
+        });
+      } catch (err) {
+        lastErr = err;
+        console.warn(`[ApexRoads] car GLB fetch failed (attempt ${attempt}/3):`, err && err.message ? err.message : err);
+        if (attempt < 3) await sleep(700);
+      }
+    }
+
+    if (gltf) {
+      try {
+        this._buildFromGLTF(gltf);
+        this.modelSource = 'glb';
+        this._finishBuild(onProgress);
+        return;
+      } catch (err) {
+        console.warn('[ApexRoads] GLB rigging failed — using procedural coupe:', err && err.message ? err.message : err);
+      }
+    } else if (lastErr) {
+      console.warn('[ApexRoads] car GLB unavailable — using procedural coupe.');
+    }
+
+    this._buildFallback();
+    this.modelSource = 'procedural';
+    this._finishBuild(onProgress);
+  }
+
+  /** Emergency path: force the procedural coupe (used if build() itself threw). */
+  async buildFallbackOnly() {
+    if (this.ready) return;
+    this._buildFallback();
+    this.modelSource = 'procedural';
+    this._finishBuild(null);
+  }
+
+  _finishBuild(onProgress) {
+    this.ready = true;
+    if (onProgress) onProgress(1);
+  }
+
+  // ============================================================= GLB path
+
+  _buildFromGLTF(gltf) {
     const raw = gltf.scene;
     raw.updateMatrixWorld(true);
 
@@ -66,7 +121,6 @@ export class Car {
     const size = box.getSize(new THREE.Vector3());
     const center = box.getCenter(new THREE.Vector3());
 
-    const correction = new THREE.Group();
     if (size.x > size.z) {
       // model is X-long — rotate so length lies along Z
       raw.rotation.y = -Math.PI / 2;
@@ -81,26 +135,13 @@ export class Car {
 
     // nose = +Z: use the front-lamp node as the nose reference
     let noseZ = 1;
-    raw.traverse((o) => {
-      if (noseZ === 1 && /front.*lamp/i.test(o.name || '')) {
-        const p = new THREE.Vector3();
-        o.getWorldPosition(p);
-        // in raw-local frame after centering: compare z of lamps via bbox test
-      }
-    });
-    const boxC = new THREE.Box3().setFromObject(raw);
     let frontMinZ = null;
     raw.traverse((o) => {
       const n = (o.name || '').toLowerCase();
-      if (/front.*lamp/.test(n) || /rear.*lamp/.test(n)) {
+      if (/front.*lamp/.test(n)) {
         const b = new THREE.Box3().setFromObject(o);
         if (b.isEmpty()) return;
-        const zc = (b.min.z + b.max.z) / 2;
-        if (/front/.test(n)) {
-          frontMinZ = frontMinZ === null ? zc : Math.max(frontMinZ, zc * 0 + zc);
-          if (frontMinZ === null) frontMinZ = zc;
-          frontMinZ = zc;
-        }
+        frontMinZ = (b.min.z + b.max.z) / 2;
       }
     });
     if (frontMinZ !== null && frontMinZ < 0) noseZ = -1;
@@ -119,6 +160,7 @@ export class Car {
     const box3 = new THREE.Box3().setFromObject(inner);
     inner.position.y -= box3.min.y;
 
+    const correction = new THREE.Group();
     correction.add(inner);
     this.body.add(correction);
     this.model = correction;
@@ -159,24 +201,7 @@ export class Car {
     this._rigWheels(raw);
     this.wheelRadius = CAR.wheelRadius;
 
-    // ---- headlight spotlights -------------------------------------------------
-    const mk = (z) => {
-      const light = new THREE.SpotLight(
-        HEADLIGHTS.color, HEADLIGHTS.intensity,
-        HEADLIGHTS.distance, HEADLIGHTS.angle, HEADLIGHTS.penumbra, HEADLIGHTS.decay
-      );
-      light.position.set(z * 0.55, 0.72, TARGET_LENGTH * 0.48);
-      const target = new THREE.Object3D();
-      target.position.set(z * 1.6, -1.1, 30);
-      this.body.add(light, target);
-      light.target = target;
-      return light;
-    };
-    this.headlightL = mk(0.55);
-    this.headlightR = mk(-0.55);
-
-    this.ready = true;
-    if (onProgress) onProgress(1);
+    this._addHeadlights();
   }
 
   _rigWheels(root) {
@@ -222,11 +247,190 @@ export class Car {
     this.wheels = wheels;
   }
 
+  // ======================================================== procedural path
+
+  /** A box whose top face is scaled/shifted — sculpted low-poly volumes. */
+  _taperBox(w, h, d, { topW = 1, topD = 1, topShiftZ = 0 } = {}) {
+    const geo = new THREE.BoxGeometry(w, h, d);
+    const pos = geo.attributes.position;
+    for (let i = 0; i < pos.count; i++) {
+      if (pos.getY(i) > 0) {
+        pos.setX(i, pos.getX(i) * topW);
+        pos.setZ(i, pos.getZ(i) * topD + topShiftZ);
+      }
+    }
+    geo.computeVertexNormals();
+    return geo;
+  }
+
+  /**
+   * Sculpted procedural coupe — only used when the GLB cannot be fetched.
+   * Nose = +Z, wheels touch y = 0, pivot layout identical to the GLB rig.
+   */
+  _buildFallback() {
+    // remove any partially-built model first (safe re-entry)
+    if (this.model) {
+      this.body.remove(this.model);
+      this.model = null;
+    }
+    for (const w of this.wheels) this.body.remove(w.suspGroup);
+    this.wheels = [];
+
+    const D = {
+      length: 4.55, width: 1.84,
+      wheelbase: CAR.wheelbase, track: CAR.trackWidth,
+      wheelR: CAR.wheelRadius, wheelW: 0.24,
+      ride: 0.30, belt: 0.72
+    };
+    const g = new THREE.Group();
+
+    const paint = new THREE.MeshPhysicalMaterial({
+      color: 0xbb0a1e, roughness: 0.38, metalness: 0.25,
+      clearcoat: 0.6, clearcoatRoughness: 0.3
+    });
+    const dark = new THREE.MeshStandardMaterial({ color: 0x0e0f11, roughness: 0.55, metalness: 0.35 });
+    const glass = new THREE.MeshPhysicalMaterial({
+      color: 0x9fb6c4, roughness: 0.12, metalness: 0.3,
+      transparent: true, opacity: 0.72, envMapIntensity: 1.4
+    });
+    const chrome = new THREE.MeshStandardMaterial({ color: 0xd8dadd, roughness: 0.25, metalness: 0.9 });
+    this.mats.paint = paint;
+
+    // main hull (sculpted, tapered toward nose + tail)
+    const hull = new THREE.Mesh(this._taperBox(D.width, D.belt, D.length * 0.97,
+      { topW: 0.94, topD: 0.985 }), paint);
+    hull.position.y = D.ride + D.belt / 2;
+    g.add(hull);
+
+    // nose wedge + tail taper
+    const nose = new THREE.Mesh(this._taperBox(D.width * 0.9, 0.30, 0.9, { topW: 0.82, topD: 0.7 }), paint);
+    nose.position.set(0, D.ride + 0.16, D.length / 2 - 0.48);
+    g.add(nose);
+
+    // greenhouse (glass) + roof
+    const cabin = new THREE.Mesh(this._taperBox(D.width * 0.86, 0.5, 2.0, { topW: 0.7, topD: 0.62, topShiftZ: -0.12 }), glass);
+    cabin.position.set(0, D.ride + D.belt + 0.24, -0.28);
+    g.add(cabin);
+    const roof = new THREE.Mesh(this._taperBox(D.width * 0.62, 0.07, 1.28, { topW: 0.96, topD: 0.9 }), paint);
+    roof.position.set(0, D.ride + D.belt + 0.5, -0.4);
+    g.add(roof);
+
+    // grille + splitter + rear diffuser
+    const grille = new THREE.Mesh(this._taperBox(D.width * 0.44, 0.16, 0.08), dark);
+    grille.position.set(0, D.ride + 0.2, D.length / 2 + 0.005);
+    g.add(grille);
+    const splitter = new THREE.Mesh(new THREE.BoxGeometry(D.width * 0.96, 0.05, 0.3), dark);
+    splitter.position.set(0, D.ride + 0.02, D.length / 2 - 0.12);
+    g.add(splitter);
+    const diffuser = new THREE.Mesh(new THREE.BoxGeometry(D.width * 0.9, 0.1, 0.24), dark);
+    diffuser.position.set(0, D.ride + 0.05, -D.length / 2 + 0.1);
+    g.add(diffuser);
+
+    // lip spoiler
+    const spoiler = new THREE.Mesh(new THREE.BoxGeometry(D.width * 0.82, 0.05, 0.22), paint);
+    spoiler.position.set(0, D.ride + D.belt + 0.1, -D.length / 2 + 0.12);
+    g.add(spoiler);
+
+    // light bars (emissive, brake-reactive)
+    const headlamp = new THREE.MeshStandardMaterial({ color: 0xfff6d8, emissive: 0xfff6d8, emissiveIntensity: 0.25, roughness: 0.3 });
+    const tail = new THREE.MeshStandardMaterial({ color: 0x330505, emissive: 0xff1a1a, emissiveIntensity: 0.15, roughness: 0.4 });
+    this.mats.headlamp = headlamp;
+    this.mats.tail = tail;
+    const hl = new THREE.Mesh(new THREE.BoxGeometry(0.42, 0.09, 0.06), headlamp);
+    hl.position.set(D.width * 0.30, D.ride + 0.30, D.length / 2 + 0.01);
+    const hr = hl.clone(); hr.position.x *= -1;
+    g.add(hl, hr);
+    const tlBar = new THREE.Mesh(new THREE.BoxGeometry(D.width * 0.74, 0.08, 0.05), tail);
+    tlBar.position.set(0, D.ride + 0.42, -D.length / 2 - 0.005);
+    g.add(tlBar);
+
+    // mirrors
+    for (const s of [1, -1]) {
+      const m = new THREE.Mesh(new THREE.BoxGeometry(0.2, 0.1, 0.1), paint);
+      m.position.set(s * (D.width / 2 + 0.09), D.ride + D.belt + 0.08, 0.62);
+      g.add(m);
+    }
+
+    this.model = g;
+    this.body.add(g);
+
+    // ---- wheels: susp → steer → spin pivots, contract identical to GLB ----
+    const tire = new THREE.CylinderGeometry(D.wheelR, D.wheelR, D.wheelW, 20);
+    tire.rotateZ(Math.PI / 2);
+    const rim = new THREE.CylinderGeometry(D.wheelR * 0.58, D.wheelR * 0.58, D.wheelW * 1.02, 16);
+    rim.rotateZ(Math.PI / 2);
+    const tireMat = new THREE.MeshStandardMaterial({ color: 0x101012, roughness: 0.9 });
+    const rimMat = chrome;
+
+    const positions = [
+      { x: D.track / 2, z: D.wheelbase / 2 },   // FL
+      { x: -D.track / 2, z: D.wheelbase / 2 },  // FR
+      { x: D.track / 2, z: -D.wheelbase / 2 },  // RL
+      { x: -D.track / 2, z: -D.wheelbase / 2 }  // RR
+    ];
+    const wheels = [];
+    for (const p of positions) {
+      // geometry is hub-centered, so all pivots sit at the hub: susp holds the
+      // hub position (updateVisual rewrites its y each frame), steer spins
+      // around Y, spin rolls around X.
+      const susp = new THREE.Group();
+      const steer = new THREE.Group();
+      const spin = new THREE.Group();
+      susp.add(steer);
+      steer.add(spin);
+
+      const t = new THREE.Mesh(tire, tireMat);
+      const r = new THREE.Mesh(rim, rimMat);
+      t.castShadow = true;
+      spin.add(t, r);
+
+      susp.position.set(p.x, D.wheelR, p.z);
+      this.body.add(susp);
+
+      wheels.push({
+        steerGroup: steer,
+        suspGroup: susp,
+        spinGroup: spin,
+        front: p.z > 0,
+        side: p.x > 0 ? 1 : -1,
+        centerY: D.wheelR
+      });
+    }
+    this.wheels = wheels;
+    this.wheelRadius = D.wheelR;
+
+    this._addHeadlights();
+  }
+
+  // =============================================================== shared
+
+  _addHeadlights() {
+    const mk = (x) => {
+      const light = new THREE.SpotLight(
+        HEADLIGHTS.color, HEADLIGHTS.intensity,
+        HEADLIGHTS.distance, HEADLIGHTS.angle, HEADLIGHTS.penumbra, HEADLIGHTS.decay
+      );
+      light.position.set(x, 0.72, TARGET_LENGTH * 0.48);
+      const target = new THREE.Object3D();
+      target.position.set(x * 2.9, -1.1, 30);
+      this.body.add(light, target);
+      light.target = target;
+      return light;
+    };
+    this.headlightL = mk(0.55);
+    this.headlightR = mk(-0.55);
+  }
+
   setPaint(key) {
     const p = PAINTS[key] || PAINTS.guardsRed;
     if (this.mats.paint) {
-      // tint the textured body — white base takes the lacquer hue
-      this.mats.paint.color.setHex(p.color).lerp(new THREE.Color(0xffffff), 0.35);
+      if (this.modelSource === 'procedural') {
+        // opaque painted body — take the lacquer hue directly
+        this.mats.paint.color.setHex(p.color);
+      } else {
+        // tint the textured body — white base takes the lacquer hue
+        this.mats.paint.color.setHex(p.color).lerp(new THREE.Color(0xffffff), 0.35);
+      }
       this.mats.paint.roughness = 0.38;
       this.mats.paint.metalness = 0.25;
       if ('clearcoat' in this.mats.paint) {
