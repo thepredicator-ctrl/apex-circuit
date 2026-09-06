@@ -85,6 +85,9 @@ export class VehiclePhysics {
     this.susp = [0.5, 0.5, 0.5, 0.5];
     this._suspSmooth = [0.5, 0.5, 0.5, 0.5];
     this._bumpPhase = 0;
+    // per-wheel world ground heights (FL FR RL RR) — consumed by Car visuals
+    // so each wheel can stay planted on its own patch of terrain
+    this.wheelGroundY = [0, 0, 0, 0];
 
     this.justHitWall = false;
     this.hitImpact = 0;
@@ -395,17 +398,20 @@ export class VehiclePhysics {
     let rl = base + longF * 0.38 - leanR * 0.36;
     let rr = base + longF * 0.38 + leanR * 0.36;
 
-    // per-wheel road height sampling (independent suspension feel)
+    // per-wheel road height sampling (independent suspension feel).
+    // Index order MUST match the fl/fr/rl/rr targets below: front axle first.
+    // (fx along forward, rx along right; right = -X at heading 0, so a
+    // negative rx offset is the LEFT wheel.)
     const halfWB = CAR.wheelbase / 2;
     const halfTW = CAR.trackWidth / 2;
     const fwdX = Math.sin(this.heading), fwdZ = Math.cos(this.heading);
     const rgtX = -fwdZ, rgtZ = fwdX;
 
     const wheelOffsets = [
-      [-halfWB, -halfTW],
-      [-halfWB, halfTW],
-      [halfWB, -halfTW],
-      [halfWB, halfTW]
+      [halfWB, -halfTW],    // FL — front, left
+      [halfWB, halfTW],     // FR — front, right
+      [-halfWB, -halfTW],   // RL — rear, left
+      [-halfWB, halfTW]     // RR — rear, right
     ];
     const wheelHeights = [0, 0, 0, 0];
     for (let i = 0; i < 4; i++) {
@@ -414,6 +420,8 @@ export class VehiclePhysics {
       const wz = this.position.z + fwdZ * fx + rgtZ * rx;
       wheelHeights[i] = this.world.groundAt(wx, wz).y;
     }
+    // exposed for the car visuals: each wheel tracks its own ground patch
+    this.wheelGroundY = wheelHeights;
     const avgH = (wheelHeights[0] + wheelHeights[1] + wheelHeights[2] + wheelHeights[3]) / 4;
     const dev = wheelHeights.map((h) => h - avgH);
     fl += dev[0] * SUSP_BUMP;

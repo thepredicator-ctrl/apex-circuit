@@ -53,6 +53,8 @@ export class Car {
     this.cockpitMode = false;
     this.mats = {};
     this.headlightsTarget = true;
+    this.steerWheelPivot = null;   // GLB cockpit steering wheel (optional)
+    this._steerWheelAxis = null;
   }
 
   // ================================================================ build
@@ -197,31 +199,47 @@ export class Car {
       }
     });
 
-    // ---- rig wheels ----------------------------------------------------------
+    // ---- rig wheels + cockpit steering wheel --------------------------------
     this._rigWheels(raw);
-    this.wheelRadius = CAR.wheelRadius;
+    this._rigSteeringWheel(raw);
 
     this._addHeadlights();
   }
 
+  /**
+   * Rig the four GLB wheels onto susp → steer → spin pivot chains.
+   *
+   * Pivots live under this.group (the UNSPRUNG frame: yaw + position only),
+   * while the body mesh stays under this.body (SPRUNG: roll/pitch/bounce).
+   * That keeps wheels planted on the road while the body articulates.
+   *
+   * The wheel node itself must ride the SPIN pivot — attaching it to susp
+   * (the old bug) leaves steer/spin empty, so wheels never turned or rolled.
+   */
   _rigWheels(root) {
-    // wheel roots are the 'brakes' nodes (each contains rim + tyre)
+    // wheel roots are the 'brakes' nodes (each contains disc + rim + tyre)
     const found = [];
     root.traverse((o) => {
       if (/node_brakes/i.test(o.name || '')) found.push(o);
     });
     // update world matrices AFTER the normalization transforms above
+    this.group.updateMatrixWorld(true);
     this.body.updateMatrixWorld(true);
 
+    const inv = new THREE.Matrix4().copy(this.group.matrixWorld).invert();
     const wheels = [];
+    let radius = 0;
+
     for (const wRoot of found) {
       const b = new THREE.Box3().setFromObject(wRoot);
       if (b.isEmpty()) continue;
       const centerW = b.getCenter(new THREE.Vector3());
-
-      // to body-local space
-      const inv = new THREE.Matrix4().copy(this.body.matrixWorld).invert();
       const centerLocal = centerW.clone().applyMatrix4(inv);
+
+      // measure the real wheel so the spin rate matches the model
+      const s = b.getSize(new THREE.Vector3());
+      const r = Math.min(s.y, s.z) / 2;
+      if (r > radius) radius = r;
 
       const susp = new THREE.Group();
       const steer = new THREE.Group();
@@ -229,9 +247,9 @@ export class Car {
       susp.add(steer);
       steer.add(spin);
       susp.position.copy(centerLocal);
-      this.body.add(susp);
-      // attach preserves the wheel's world transform under the new pivot
-      susp.attach(wRoot);
+      this.group.add(susp);
+      // attach preserves the wheel's world transform under the SPIN pivot
+      spin.attach(wRoot);
 
       wheels.push({
         steerGroup: steer,
@@ -245,6 +263,34 @@ export class Car {
     // order FL FR RL RR (legacy contract)
     wheels.sort((a, b) => (b.front - a.front) || (a.side - b.side));
     this.wheels = wheels;
+    if (radius > 0.15 && Number.isFinite(radius)) this.wheelRadius = radius;
+  }
+
+  /**
+   * Cockpit steering wheel rotates with the rack (visual sugar — skipped
+   * silently when the model has no steering-wheel node).
+   */
+  _rigSteeringWheel(root) {
+    let node = null;
+    root.traverse((o) => {
+      if (!node && /steering.?wheel/i.test(o.name || '')) node = o;
+    });
+    if (!node) return;
+    this.body.updateMatrixWorld(true);
+    const b = new THREE.Box3().setFromObject(node);
+    if (b.isEmpty()) return;
+
+    const inv = new THREE.Matrix4().copy(this.body.matrixWorld).invert();
+    const local = b.getCenter(new THREE.Vector3()).applyMatrix4(inv);
+
+    const pivot = new THREE.Group();
+    pivot.position.copy(local);
+    this.body.add(pivot);
+    pivot.attach(node);
+
+    this.steerWheelPivot = pivot;
+    // column axis: up and tilted back toward the driver's chest
+    this._steerWheelAxis = new THREE.Vector3(0, 0.94, -0.34).normalize();
   }
 
   // ======================================================== procedural path
@@ -273,8 +319,16 @@ export class Car {
       this.body.remove(this.model);
       this.model = null;
     }
-    for (const w of this.wheels) this.body.remove(w.suspGroup);
+    for (const w of this.wheels) {
+      this.group.remove(w.suspGroup);
+      this.body.remove(w.suspGroup);
+    }
     this.wheels = [];
+    if (this.steerWheelPivot) {
+      this.body.remove(this.steerWheelPivot);
+      this.steerWheelPivot = null;
+      this._steerWheelAxis = null;
+    }
 
     const D = {
       length: 4.55, width: 1.84,
@@ -385,7 +439,7 @@ export class Car {
       spin.add(t, r);
 
       susp.position.set(p.x, D.wheelR, p.z);
-      this.body.add(susp);
+      this.group.add(susp);   // unsprung frame — same contract as the GLB rig
 
       wheels.push({
         steerGroup: steer,
@@ -453,45 +507,63 @@ export class Car {
     this.group.position.set(phys.position.x, phys.position.y + 0.02, phys.position.z);
     this.group.rotation.y = phys.heading;
 
-    // ---- wheels: spin + steer + suspension travel -------------------------
+    // ---- unsprung mass: wheels spin, steer, and stay planted ---------------
     const R = this.wheelRadius || CAR.wheelRadius;
-    this._spinAngle -= (phys.vF / R) * dt;
+    this._spinAngle += (phys.vF / R) * dt;   // + spin rolls forward
 
     const steerTarget = -phys.steerAngle;
     this._steerVis = THREE.MathUtils.damp(this._steerVis, steerTarget, 14, dt);
 
-    const susp = phys.suspSmooth;
+    // each wheel follows ITS ground patch (phys.wheelGroundY, FL FR RL RR);
+    // legacy phys (remote cars) falls back to the susp-compression contract
+    const gY = phys.wheelGroundY || null;
+    const legacy = phys.suspSmooth || null;
+    let avgDev = 0;
     for (let i = 0; i < this.wheels.length; i++) {
       const w = this.wheels[i];
       w.spinGroup.rotation.x = this._spinAngle;
       if (w.front) w.steerGroup.rotation.y = this._steerVis;
-      const travel = THREE.MathUtils.clamp(
-        (susp[i] - 0.5) * 2 * SUSPENSION.travel,
-        -SUSPENSION.travel * 1.2, SUSPENSION.travel * 1.2
-      );
+
+      let dev = 0;
+      if (gY && gY[i] !== undefined && phys.surfaceY !== undefined) {
+        dev = gY[i] - phys.surfaceY;           // wheel's ground vs CG ground
+      } else if (legacy) {
+        dev = (legacy[i] - 0.5) * 2 * SUSPENSION.travel;
+      }
+      w._dev = (w._dev === undefined)
+        ? dev
+        : THREE.MathUtils.damp(w._dev, dev, 16, dt);
+      const travel = THREE.MathUtils.clamp(w._dev, -0.28, 0.28);
       w.suspGroup.position.y = w.centerY + travel;
+      avgDev += travel / (this.wheels.length || 1);
     }
 
-    // ---- body roll + pitch -------------------------------------------------
-    const roll = THREE.MathUtils.clamp(
-      (susp[1] + susp[3] - susp[0] - susp[2]) * 0.5 * SUSPENSION.rollG * 6,
-      -SUSPENSION.maxRoll, SUSPENSION.maxRoll
-    );
-    const pitch = THREE.MathUtils.clamp(
-      (susp[2] + susp[3] - susp[0] - susp[1]) * 0.5 * SUSPENSION.accelPitch * 6,
-      -SUSPENSION.maxPitch, SUSPENSION.maxPitch
-    );
-    this.body.rotation.z = THREE.MathUtils.damp(this.body.rotation.z, pitch + phys.roadPitch, 8, dt);
-    this.body.rotation.x = THREE.MathUtils.damp(this.body.rotation.x, roll + phys.roadRoll, 8, dt);
+    // ---- sprung mass: body articulates over planted wheels ------------------
+    // nose = +Z, so PITCH is rotation.x (brake dive = positive) and ROLL is
+    // rotation.z (right side down = positive).
+    const grade = phys.roadPitch || 0;   // + = ground rises ahead -> nose up
+    const bank  = phys.roadRoll || 0;    // + = ground rises to the right
+    const dive  = THREE.MathUtils.clamp(-(phys.aLongS || 0) * 0.006, -0.055, 0.055);
+    const lean  = THREE.MathUtils.clamp((phys.latAccel || 0) * 0.0065, -0.09, 0.09);
+    const targetPitch = THREE.MathUtils.clamp(-grade + dive, -0.2, 0.2);
+    const targetRoll  = THREE.MathUtils.clamp(-bank + lean, -0.14, 0.14);
+    this.body.rotation.x = THREE.MathUtils.damp(this.body.rotation.x, targetPitch, 8, dt);
+    this.body.rotation.z = THREE.MathUtils.damp(this.body.rotation.z, targetRoll, 8, dt);
 
-    // body bounce
-    const avgComp = (susp[0] + susp[1] + susp[2] + susp[3]) / 4;
-    const targetY = -(avgComp - 0.5) * SUSPENSION.travel * 1.6;
+    // body bounce — sprung mass answers the average suspension deviation
+    const targetY = THREE.MathUtils.clamp(-avgDev * 0.9, -0.13, 0.13);
     const k = 90, c = 13;
     const accel = (targetY - this._bodyY) * k - this._bodyYV * c;
     this._bodyYV += accel * dt;
     this._bodyY += this._bodyYV * dt;
-    this.body.position.y = THREE.MathUtils.clamp(this._bodyY, -0.12, 0.12);
+    this.body.position.y = THREE.MathUtils.clamp(this._bodyY, -0.14, 0.14);
+
+    // cockpit steering wheel follows the rack
+    if (this.steerWheelPivot && this._steerWheelAxis) {
+      this.steerWheelPivot.quaternion.setFromAxisAngle(
+        this._steerWheelAxis, this._steerVis * 7
+      );
+    }
 
     // ---- brake / tail lights ----------------------------------------------
     if (this.mats.tail) {
