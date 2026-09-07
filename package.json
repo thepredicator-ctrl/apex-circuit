@@ -20,7 +20,8 @@
     "dev": "vite",
     "build": "vite build && node scripts/build-sw.mjs",
     "icons": "node scripts/make-icons.mjs",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "secrets": "node scripts/secrets.mjs"
   },
   "dependencies": {
     "three": "^0.182.0",

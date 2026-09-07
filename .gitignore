@@ -9,6 +9,9 @@ dist/
 .env.*
 *.pem
 
+# local encrypted vault override (default lives in ~/.apex-secrets, outside the repo)
+.secrets/
+
 # system files
 .DS_Store
 Thumbs.db
