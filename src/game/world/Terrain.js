@@ -74,6 +74,18 @@ export class Terrain {
 
   /** LOW-FREQUENCY terrain — what roads grade over (no detail) */
   base(x, z) {
+    let y = this.baseRaw(x, z);
+    // Hydrology erosion: river channels + lake basins
+    y = this.hydro.erode(x, z, y);
+    return y;
+  }
+
+  /**
+   * Raw pre-erosion base height (continents, mountains, hills, river valleys).
+   * Exposed separately so Hydrology can read elevation for river/lake placement
+   * WITHOUT re-entering base() -> erode() -> base() (infinite recursion).
+   */
+  baseRaw(x, z) {
     const cont = this._continent(x, z);
     let y = cont * 52 - 7;                        // sea in the low third
     const mm = this._mountainMask(x, z);
@@ -89,8 +101,6 @@ export class Terrain {
       const depth = Math.min(y + 4, 7 + rv * 6);
       y -= depth * rv;
     }
-    // Hydrology erosion: river channels + lake basins
-    y = this.hydro.erode(x, z, y);
     return y;
   }
 

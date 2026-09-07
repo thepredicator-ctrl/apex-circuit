@@ -24,10 +24,15 @@ export class Hydrology {
 
   /**
    * Sample hydrology at (x, z).
+   * @param {number} [elevation] pre-carve terrain height (world y). When omitted
+   *   it is derived from the terrain's non-eroding base, to avoid re-entering
+   *   Terrain.base() (which itself calls Hydrology.erode -> infinite recursion).
    * @returns {{riverDepth:number, flowRate:number, lakeDepth:number, bankDist:number, isWater:boolean}}
    */
-  sample(x, z) {
-    const y = this._terrain.base(x, z);
+  sample(x, z, elevation = null) {
+    const y = elevation !== null
+      ? elevation
+      : this._terrain.baseRaw(x, z);
 
     // Flow field: gradient of large-scale noise
     const n = vnoise2(x * HYDRO.RIVER_SCALE, z * HYDRO.RIVER_SCALE, this._seed);
@@ -71,7 +76,7 @@ export class Hydrology {
    * @returns {number}
    */
   erode(x, z, baseY) {
-    const h = this.sample(x, z);
+    const h = this.sample(x, z, baseY);
     if (h.isWater) {
       return baseY - h.riverDepth - h.lakeDepth;
     }
