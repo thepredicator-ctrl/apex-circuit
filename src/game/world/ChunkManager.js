@@ -21,6 +21,7 @@ import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { WORLD, ROAD, ROAD_INFO } from '../core/Constants.js';
 import { mulberry32, hash2i, clamp } from '../core/Noise.js';
+import { BIOME_ID } from './Terrain.js';
 
 const CS = WORLD.chunkSize;
 const Q = WORLD.terrainQuads;
@@ -634,10 +635,10 @@ export class ChunkManager {
       const z = z0 + Math.floor(i / 3) * CS * 0.5 + CS * 0.25;
       samples.push(terrain.biome(x, z));
     }
-    const forest = samples.filter((b) => b === 3).length;
-    const desert = samples.filter((b) => b === 4).length;
-    const mountain = samples.filter((b) => b >= 5).length;
-    const beach = samples.filter((b) => b === 1).length;
+    const forest = samples.filter((b) => b === BIOME_ID.FOREST || b === BIOME_ID.RAINFOREST || b === BIOME_ID.TAIGA).length;
+    const desert = samples.filter((b) => b === BIOME_ID.DESERT).length;
+    const mountain = samples.filter((b) => b === BIOME_ID.MOUNTAIN || b === BIOME_ID.SNOW || b === BIOME_ID.VOLCANIC).length;
+    const beach = samples.filter((b) => b === BIOME_ID.BEACH).length;
     const w = mystery.intensity(x0 + CS / 2, z0 + CS / 2);
 
     // no scatter inside city cores
@@ -661,14 +662,15 @@ export class ChunkManager {
       const ry = rng() * Math.PI * 2;
       const s = 0.7 + rng() * 0.9;
       const y = g.y - 0.15;
-      if (biome === 3 || biome === 5 || biome === 6) {
+      if (biome === BIOME_ID.FOREST || biome === BIOME_ID.RAINFOREST || biome === BIOME_ID.TAIGA ||
+          biome === BIOME_ID.MOUNTAIN || biome === BIOME_ID.SNOW) {
         if (w > 0.35 && rng() < w * 0.45) push('dead', scenery.deadTreeGeo, scenery.matTree, p.x, y, p.z, s * 1.2, ry, 0);
         else push('conifer', scenery.coniferGeo, scenery.matTree, p.x, y, p.z, s, ry, (rng() - 0.5) * 0.05);
-      } else if (biome === 1) {
+      } else if (biome === BIOME_ID.BEACH) {
         push('palm', scenery.palmGeo, scenery.matTree, p.x, y, p.z, 0.8 + rng() * 0.5, ry);
-      } else if (biome === 4) {
+      } else if (biome === BIOME_ID.DESERT) {
         push('cactus', scenery.cactusGeo, scenery.matTree, p.x, y, p.z, 0.7 + rng() * 0.6, ry);
-      } else if (biome === 2 && rng() < 0.4) {
+      } else if ((biome === BIOME_ID.SAVANNA || biome === BIOME_ID.GRASSLAND) && rng() < 0.4) {
         push('broad', scenery.broadleafGeo, scenery.matTree, p.x, y, p.z, s, ry);
       }
     }

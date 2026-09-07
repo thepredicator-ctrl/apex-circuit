@@ -14,13 +14,22 @@
 
 import { vnoise1, vnoise2, fbm2, ridged2, smoothstep, clamp, lerp } from '../core/Noise.js';
 import { WORLD } from '../core/Constants.js';
+import { BiomeSystem, BIOME } from './BiomeSystem.js';
+import { Hydrology } from './Hydrology.js';
 
-export const BIOME = {
-  OCEAN: 0, BEACH: 1, PLAINS: 2, FOREST: 3, DESERT: 4, MOUNTAIN: 5, SNOW: 6
-};
+/**
+ * Numeric biome IDs for backward-compat with ChunkManager / HUD / Weather.
+ * Maps to BiomeSystem's object registry by id.
+ */
+export const BIOME_ID = Object.freeze({
+  OCEAN: 0, BEACH: 1, DESERT: 2, SAVANNA: 3, GRASSLAND: 4,
+  FOREST: 5, RAINFOREST: 6, TAIGA: 7, TUNDRA: 8,
+  SNOW: 9, MOUNTAIN: 10, VOLCANIC: 11
+});
 
 export const BIOME_NAME = [
-  'OCEAN', 'COAST', 'PLAINS', 'FOREST', 'DESERT', 'MOUNTAINS', 'HIGHLANDS'
+  'OCEAN', 'BEACH', 'DESERT', 'SAVANNA', 'GRASSLAND',
+  'FOREST', 'RAINFOREST', 'TAIGA', 'TUNDRA', 'SNOW', 'MOUNTAIN', 'VOLCANIC'
 ];
 
 export class Terrain {
@@ -36,6 +45,10 @@ export class Terrain {
     this.sTemp = s ^ 0x7a8b92;
     this.sMoist = s ^ 0x8b9c03;
     this.sTint = s ^ 0x9cad14;
+
+    // New ecology subsystems
+    this.biomes = new BiomeSystem(s, this);
+    this.hydro = new Hydrology(s, this);
   }
 
   /** continent shape: -1..1 */
@@ -76,6 +89,8 @@ export class Terrain {
       const depth = Math.min(y + 4, 7 + rv * 6);
       y -= depth * rv;
     }
+    // Hydrology erosion: river channels + lake basins
+    y = this.hydro.erode(x, z, y);
     return y;
   }
 
@@ -103,15 +118,8 @@ export class Terrain {
 
   biome(x, z, y = null, slope = 0) {
     if (y === null) y = this.height(x, z);
-    if (y < WORLD.waterLevel - 0.6) return BIOME.OCEAN;
-    if (y < WORLD.waterLevel + 1.6) return BIOME.BEACH;
-    const temp = this.tempAt(x, z, y);
-    if (y > 108 || (temp < 0.22 && y > 40)) return BIOME.SNOW;
-    if (y > 62 || slope > 0.55) return BIOME.MOUNTAIN;
-    const moist = this.moistAt(x, z);
-    if (temp > 0.62 && moist < 0.42) return BIOME.DESERT;
-    if (moist > 0.54) return BIOME.FOREST;
-    return BIOME.PLAINS;
+    const sample = this.biomes.sample(x, z);
+    return sample.biome.id;
   }
 
   /** weather-region key for Weather.js */
@@ -119,9 +127,9 @@ export class Terrain {
     if (y === null) y = this.base(x, z);
     if (y < WORLD.waterLevel + 4) return 'coast';
     const b = this.biome(x, z, y);
-    if (b === BIOME.DESERT) return 'desert';
-    if (b === BIOME.MOUNTAIN || b === BIOME.SNOW) return 'mountain';
-    if (b === BIOME.FOREST) return 'forest';
+    if (b === BIOME_ID.DESERT) return 'desert';
+    if (b === BIOME_ID.MOUNTAIN || b === BIOME_ID.SNOW || b === BIOME_ID.VOLCANIC) return 'mountain';
+    if (b === BIOME_ID.FOREST || b === BIOME_ID.RAINFOREST || b === BIOME_ID.TAIGA) return 'forest';
     return 'plains';
   }
 
@@ -130,27 +138,61 @@ export class Terrain {
    * slope: 0..1 approximate steepness. mystery: 0..1 eerie desaturation.
    */
   colorAt(x, z, y, slope, mystery, out) {
-    const b = this.biome(x, z, y, slope);
-    let r, g, bl;
-    // base colors per biome with 2-octave patchiness
+    const sample = this.biomes.sample(x, z);
+    const bId = sample.biome.id;
+
+    // Convert biome tint hex to linear-ish floats with 2-octave patchiness
+    const tint = sample.tint;
     const p1 = vnoise2(x / 60, z / 60, this.sTint);
     const p2 = vnoise2(x / 17, z / 17, this.sTint ^ 0x5157);
     const v = p1 * 0.7 + p2 * 0.3;
-    switch (b) {
-      case BIOME.OCEAN: {
-        const d = clamp((-y) / 14, 0, 1);
-        r = lerp(0.52, 0.16, d); g = lerp(0.56, 0.30, d); bl = lerp(0.42, 0.42, d);
+
+    let r, g, bl;
+
+    switch (bId) {
+      case BIOME_ID.OCEAN: {
+        const depth = clamp((-y) / 14, 0, 1);
+        r = lerp(0.52, 0.16, depth); g = lerp(0.56, 0.30, depth); bl = lerp(0.42, 0.42, depth);
         break;
       }
-      case BIOME.BEACH: {
+      case BIOME_ID.BEACH: {
         r = 0.78 + v * 0.06; g = 0.71 + v * 0.06; bl = 0.52 + v * 0.05;
         break;
       }
-      case BIOME.DESERT: {
+      case BIOME_ID.DESERT: {
         r = 0.76 + v * 0.12; g = 0.62 + v * 0.10; bl = 0.38 + v * 0.07;
         break;
       }
-      case BIOME.MOUNTAIN: {
+      case BIOME_ID.SAVANNA: {
+        r = 0.45 + v * 0.10; g = 0.56 + v * 0.10; bl = 0.24 + v * 0.06;
+        break;
+      }
+      case BIOME_ID.GRASSLAND: {
+        r = 0.30 + v * 0.10; g = 0.48 + v * 0.12; bl = 0.16 + v * 0.06;
+        break;
+      }
+      case BIOME_ID.FOREST: {
+        r = 0.16 + v * 0.10; g = 0.30 + v * 0.12; bl = 0.12 + v * 0.06;
+        break;
+      }
+      case BIOME_ID.RAINFOREST: {
+        r = 0.08 + v * 0.08; g = 0.22 + v * 0.10; bl = 0.06 + v * 0.04;
+        break;
+      }
+      case BIOME_ID.TAIGA: {
+        r = 0.18 + v * 0.08; g = 0.28 + v * 0.10; bl = 0.14 + v * 0.06;
+        break;
+      }
+      case BIOME_ID.TUNDRA: {
+        r = 0.48 + v * 0.08; g = 0.52 + v * 0.08; bl = 0.42 + v * 0.06;
+        break;
+      }
+      case BIOME_ID.SNOW: {
+        const rock = clamp(slope * 1.4 - 0.2, 0, 1) * clamp((y - 40) / 30, 0, 1);
+        r = lerp(0.93, 0.44, rock); g = lerp(0.95, 0.42, rock); bl = lerp(0.98, 0.40, rock);
+        break;
+      }
+      case BIOME_ID.MOUNTAIN: {
         const rock = clamp(slope * 1.2, 0, 1);
         const grass = 0.36 + v * 0.1;
         r = lerp(grass * 0.9, 0.46 + v * 0.1, rock);
@@ -158,21 +200,18 @@ export class Terrain {
         bl = lerp(grass * 0.7, 0.40 + v * 0.06, rock);
         break;
       }
-      case BIOME.SNOW: {
-        const rock = clamp(slope * 1.4 - 0.2, 0, 1) * clamp((y - 96) / 30, 0, 1);
-        r = lerp(0.93, 0.44, rock); g = lerp(0.95, 0.42, rock); bl = lerp(0.98, 0.40, rock);
+      case BIOME_ID.VOLCANIC: {
+        r = 0.18 + v * 0.06; g = 0.12 + v * 0.04; bl = 0.10 + v * 0.04;
         break;
       }
-      case BIOME.FOREST: {
-        r = 0.16 + v * 0.10; g = 0.30 + v * 0.12; bl = 0.12 + v * 0.06;
-        break;
-      }
-      default: { // PLAINS
-        const dry = smoothstep(0.4, 0.75, v);
-        r = lerp(0.30, 0.55, dry); g = lerp(0.46, 0.50, dry); bl = lerp(0.16, 0.22, dry);
-        break;
+      default: {
+        // fallback: decode tint hex
+        r = ((tint >> 16) & 0xff) / 255;
+        g = ((tint >> 8) & 0xff) / 255;
+        bl = (tint & 0xff) / 255;
       }
     }
+
     // mystery tint: ashen, slightly violet desaturation
     if (mystery > 0) {
       const lum = (r + g + bl) / 3;
@@ -182,6 +221,6 @@ export class Terrain {
       bl = lerp(bl, lum * 1.05, k);
     }
     out[0] = r; out[1] = g; out[2] = bl;
-    return b;
+    return bId;
   }
 }
