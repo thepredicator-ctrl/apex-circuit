@@ -363,6 +363,7 @@ export class Cities {
     this._cityCache = new BoundedCache(512);
     this._buildCache = new BoundedCache(128);
     this._ringElevCache = new BoundedCache(64);
+    this._streetCache = new BoundedCache(128); // street grids + lamps per city
 
     // Precomputed hash salts
     this._saltSiting = this._seed ^ 0x7117;
@@ -681,11 +682,29 @@ export class Cities {
   // ------------------------------------------------------------------
 
   /**
+   * Lazy per-city holder for derived street data.
+   * City records are frozen (see _buildCityRecord) so caches must live on
+   * the Cities instance, keyed by city.id — writing onto the record would
+   * throw "object is not extensible".
+   * @param {Object} city
+   * @returns {{streets?:Object[], stMaps?:Object, lamps?:Object[]}}
+   */
+  _streetEntry(city) {
+    let e = this._streetCache.get(city.id);
+    if (!e) {
+      e = {};
+      this._streetCache.set(city.id, e);
+    }
+    return e;
+  }
+
+  /**
    * @param {City} city
    * @returns {Object[]}
    */
   streetRoutes(city) {
-    if (city._streets) return city._streets;
+    const entry = this._streetEntry(city);
+    if (entry.streets) return entry.streets;
 
     const out = [];
     const n = Math.ceil((city.radius + 80) / CITY_CONFIG.BLOCK);
@@ -722,7 +741,7 @@ export class Cities {
       });
     }
 
-    city._streets = out;
+    entry.streets = out;
     return out;
   }
 
@@ -803,7 +822,8 @@ export class Cities {
    * @returns {{r:Map<number, Object>, c:Map<number, Object>}}
    */
   _streetMaps(city) {
-    if (city._stMaps) return city._stMaps;
+    const entry = this._streetEntry(city);
+    if (entry.stMaps) return entry.stMaps;
 
     const r = new Map();
     const c = new Map();
@@ -813,8 +833,8 @@ export class Cities {
       else c.set(st.k, st);
     }
 
-    city._stMaps = { r, c };
-    return city._stMaps;
+    entry.stMaps = { r, c };
+    return entry.stMaps;
   }
 
   /**
@@ -1117,7 +1137,8 @@ export class Cities {
    * @returns {Object[]}
    */
   lampsIn(city) {
-    if (city._lamps) return city._lamps;
+    const entry = this._streetEntry(city);
+    if (entry.lamps) return entry.lamps;
 
     const out = [];
     const xf = new CityTransform(city.x, city.z, city.angle);
@@ -1142,7 +1163,7 @@ export class Cities {
       }
     }
 
-    city._lamps = out;
+    entry.lamps = out;
     return out;
   }
 
@@ -1154,6 +1175,7 @@ export class Cities {
     this._cityCache.clear();
     this._buildCache.clear();
     this._ringElevCache.clear();
+    this._streetCache.clear();
     this._terrain = null;
     this._network = null;
   }
