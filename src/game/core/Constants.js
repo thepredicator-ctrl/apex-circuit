@@ -3,9 +3,10 @@
  * Units: meters / seconds / radians unless noted.
  *
  * The car is a rear-drive sports coupe (the CARRERA GLB model) simulated with
- * a dynamic bicycle model (see vehicle/Physics.js): slip angles + Pacejka
- * tire curves + friction ellipse + yaw dynamics. The world is a seeded,
- * deterministic, streamed open world (see world/*).
+ * a simple single-track bicycle model (see vehicle/Physics.js): drive/brake
+ * forces along the road, slip-angle cornering forces saturated by grip, and
+ * speed-faded steering. The world is a seeded, deterministic, streamed open
+ * world (see world/*).
  */
 
 // ============================================================================
