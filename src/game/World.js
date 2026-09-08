@@ -121,7 +121,9 @@ const assertFinite = (value, name) => {
 };
 
 const assertUint32 = (value, name) => {
-  if (typeof value !== 'number' || value < 0 || value > 0xFFFFFFFF || (value | 0) !== value) {
+  // NOTE: plain `(value | 0) !== value` is an INT32 check — it wrongly rejects
+  // any seed >= 2^31, which is half of all valid uint32 seeds. Use integer math.
+  if (typeof value !== 'number' || !Number.isInteger(value) || value < 0 || value > 0xFFFFFFFF) {
     throw new TypeError(`${name} must be a uint32, got ${value}`);
   }
 };
