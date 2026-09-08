@@ -383,7 +383,10 @@ export class VehiclePhysics {
     const vy = this.v;
 
     // Tire slip angles — plain steering geometry, no relaxation lag needed.
-    const alphaF = this._delta - Math.atan2(vy + a * this.yawRate, vx);
+    // Sign convention: steer +1 = RIGHT. In this world, right-of-travel is -X
+    // when heading=0 (forward = +Z, right = (-cos h, sin h)), i.e. a right turn
+    // must drive yawRate NEGATIVE. Hence the negated delta.
+    const alphaF = -this._delta - Math.atan2(vy + a * this.yawRate, vx);
     const rearMu = handbrake ? mu * ARCADE.HB_REAR_GRIP : mu;
     const alphaR = -Math.atan2(vy - b * this.yawRate, vx);
 
