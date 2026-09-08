@@ -31,6 +31,9 @@ import { QUALITY, CAR, WORLD as W } from './core/Constants.js';
 
 const PHYS_STEP = 1 / 120;
 
+// named day-phase presets, kept in sync with Environment.applyPreset
+const TIME_PHASES = { dawn: 0.23, day: 0.5, dusk: 0.77, night: 0.0 };
+
 export class Game {
   constructor({ container, onReady, onError }) {
     this.container = container;
@@ -111,15 +114,17 @@ export class Game {
       else seed = (Math.random() * 0xffffffff) >>> 0;
     } catch { seed = 1337; }
     this.journey.seed = seed;
-    this.journey.clock = this.settings.dayStart !== undefined ? this.settings.dayStart : 0.42;
+    // initial time of day from the settings preset (dawn/day/dusk/night),
+    // mirroring Environment.applyPreset so the skydome and the journey clock agree
+    this.journey.clock = TIME_PHASES[this.settings.timeOfDay] ?? 0.42;
 
     // ---- world ------------------------------------------------------------
-    this.world = new World(seed, aniso, this.settings.quality);
+    this.world = new World({ seed, anisotropy: aniso, quality: this.settings.quality });
     this.track = this.world;                 // legacy alias
     this.scene.add(this.world.group);
 
     // ---- atmosphere ---------------------------------------------------------
-    this.environment = new Environment(this.scene, this.renderer, isMobile);
+    this.environment = new Environment(this.scene, this.renderer, isMobile, seed);
     this.weather = new Weather(this.scene, isMobile, seed);
     this.weather.onThunder = () => {
       this.audio && this.audio.beep(70, 0.5, 0.12, 'sawtooth');
@@ -357,6 +362,10 @@ export class Game {
         break;
       case 'cameraSmoothing':
         this.cameraRig.setSmoothing(value);
+        break;
+      case 'timeOfDay':
+        // jump the world clock to the named preset (dawn/day/dusk/night)
+        if (TIME_PHASES[value] !== undefined) this.journey.clock = TIME_PHASES[value];
         break;
     }
     this.hud.syncSettings(this.settings.data);

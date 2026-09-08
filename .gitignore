@@ -29,5 +29,8 @@ worklog.md
 # tool result caches
 tool-results/
 
+# one-off diagnostic/bisect scripts (scripts/_*.mjs)
+scripts/_*.mjs
+
 # alt package manager lockfile
 bun.lock
