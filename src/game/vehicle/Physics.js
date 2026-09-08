@@ -346,11 +346,28 @@ export class VehiclePhysics {
     this.justHitWall = false;
     this._time += dt;
 
+    // ---- State integrity guard ----------------------------------------------
+    // A split-second corruption (bad surface sample, diverged state) used to
+    // cascade into NaN positions, which then threw inside the world sampler
+    // and killed the game loop — freezing the car into an uncontrollable
+    // ghost ("it drives for me / no control"). Recover instead of crashing.
+    if (!Number.isFinite(this.position.x) || !Number.isFinite(this.position.z) ||
+        !Number.isFinite(this.heading) || !Number.isFinite(this.u) ||
+        !Number.isFinite(this.v) || !Number.isFinite(this.yawRate)) {
+      this._resurface();
+    }
+
     // ---- Unpack inputs ------------------------------------------------------
-    const throttle = controlsActive ? clamp(input.state.throttle, 0, 1) : 0;
-    const driverBrake = controlsActive ? clamp(input.state.brake, 0, 1) : 0;
-    const steerInput = controlsActive ? clamp(input.state.steer, -1, 1) : 0;
-    const handbrake = controlsActive && !!input.state.handbrake;
+    // Same protection from the other direction: sanitize every input to a
+    // finite number before use. A stale/NaN input (touch glitch, stray
+    // NaN) previously propagated through clamp() into the chassis state.
+    const tIn = Number(input.state.throttle);
+    const bIn = Number(input.state.brake);
+    const sIn = Number(input.state.steer);
+    const throttle = controlsActive && Number.isFinite(tIn) ? clamp(tIn, 0, 1) : 0;
+    const driverBrake = controlsActive && Number.isFinite(bIn) ? clamp(bIn, 0, 1) : 0;
+    const steerInput = controlsActive && Number.isFinite(sIn) ? clamp(sIn, -1, 1) : 0;
+    const handbrake = controlsActive && !!(input.state.handbrake);
     const holdStill = !controlsActive;
 
     this.throttleOut = throttle;
@@ -406,7 +423,7 @@ export class VehiclePhysics {
     const forces = this._sumForcesAtCG(a, b, halfTW, aero);
 
     // ---- Chassis integration -------------------------------------------------
-    this._integrateChassis(dt, forces.Fx, forces.Fy, forces.Mz, forces.Mx, forces.My);
+    this._integrateChassis(dt, forces.Fx, forces.Fy, forces.Mz, forces.Mx, forces.My, holdStill);
 
     // ---- Post-movement surface & damping ------------------------------------
     this._finalizeFrame(dt);
@@ -452,6 +469,36 @@ export class VehiclePhysics {
     this.onDirt = false;
     this.onRoad = true;
     this.roadType = ROAD.HIGHWAY;
+  }
+
+  /**
+   * Restore a sane chassis pose after non-finite state corruption.
+   * Keeps a valid position if one exists (otherwise drops to the origin),
+   * zeroes all linear/rotational state so the sim resumes cleanly.
+   */
+  _resurface() {
+    const x = Number.isFinite(this.position.x) && Math.abs(this.position.x) < 50000 ? this.position.x : 0;
+    const z = Number.isFinite(this.position.z) && Math.abs(this.position.z) < 50000 ? this.position.z : 0;
+    if (!Number.isFinite(this.heading)) this.heading = 0;
+
+    this.u = 0;
+    this.v = 0;
+    this.yawRate = 0;
+    this.pitchRate = 0;
+    this.rollRate = 0;
+    this.pitch = 0;
+    this.roll = 0;
+    this._delta = 0;
+    this._deltaL = 0;
+    this._deltaR = 0;
+    this.wheelOmega.fill(0);
+    this.wheelSlipRatio.fill(0);
+    this.wheelSlipAngle.fill(0);
+    this.velocity.set(0, 0, 0);
+
+    const surf = this._sampleSurfaceAt(x, z);
+    this.position.set(x, surf.y, z);
+    this._resetSurfaceFlags();
   }
 
   _sampleSurfaceAt(x, z) {
@@ -884,7 +931,7 @@ export class VehiclePhysics {
   // Private: Chassis Integration
   // ------------------------------------------------------------------
 
-  _integrateChassis(dt, Fx, Fy, Mz, Mx, My) {
+  _integrateChassis(dt, Fx, Fy, Mz, Mx, My, holdStill) {
     const m = CAR.mass;
     const L = CAR.wheelbase;
 
@@ -950,6 +997,16 @@ export class VehiclePhysics {
       this.v = 0;
       this.yawRate = 0;
     }
+
+    // Controls inactive (menu / map open / paused): honor the holdStill
+    // intent — damp the chassis to a full stop instead of letting it coast
+    // on. Previously this variable was computed and never used, so the car
+    // kept rolling on its own whenever input gating switched off.
+    if (holdStill) {
+      this.u = damp(this.u, 0, 3.5, dt);
+      this.v = damp(this.v, 0, 3.5, dt);
+      this.yawRate = damp(this.yawRate, 0, 3.5, dt);
+    }
   }
 
   // ------------------------------------------------------------------
@@ -966,8 +1023,69 @@ export class VehiclePhysics {
 
     this.position.y = damp(this.position.y, this.surfaceY, 14, dt);
 
+    // Guardrail containment (highways + bridges) — must run after the world
+    // position advances and after Y-settling so the pull-back uses the
+    // freshest lateral offset.
+    this._applyFence(dt, surf);
+
     this.latAccel = damp(this.latAccel, this.u * this.yawRate, 8, dt);
     this.aLongS = damp(this.aLongS, this._tmpAx || 0, 7, dt);
+  }
+
+  /**
+   * Invisible guardrail. Fenced roads (highways and bridge decks) keep a
+   * usable road record up to ~halfWidth + 13 m past the edge — that band is
+   * the wall: pull the chassis back onto the shoulder and scrub the outward
+   * velocity so the car cannot launch off the road. Drives the visual fences
+   * built by ChunkManager.
+   */
+  _applyFence(dt, surf) {
+    if (!surf || (surf.roadType !== ROAD.HIGHWAY && !surf.bridge)) return;
+
+    const lat = surf.lateral;
+    const bound = surf.halfWidth + 0.75;
+    const absLat = Math.abs(lat);
+    if (absLat <= bound || absLat >= bound + 12) return;
+
+    // Direction of increasing lateral offset (perpendicular, right of travel).
+    const D = 1.2;
+    const fwdX = Math.sin(this.heading);
+    const fwdZ = Math.cos(this.heading);
+    const lx = this.world.surfaceAt(this.position.x + D, this.position.z, fwdX, fwdZ).lateral;
+    const lz = this.world.surfaceAt(this.position.x, this.position.z + D, fwdX, fwdZ).lateral;
+    // Near junctions/interchanges the nearest road record can swap between
+    // routes; if the two gradient samples disagree wildly with the local
+    // lateral, skip the fence for this frame instead of yanking the car.
+    if (Math.abs(lx - lat) > 6 || Math.abs(lz - lat) > 6) return;
+
+    let gx = (lx - lat) / D;
+    let gz = (lz - lat) / D;
+    const gn = Math.hypot(gx, gz);
+    if (gn < 0.05) return;
+    gx /= gn;
+    gz /= gn;
+    const outX = Math.sign(lat) * gx;
+    const outZ = Math.sign(lat) * gz;
+
+    // Pull the chassis back onto the shoulder (the rumble zone).
+    const pen = absLat - bound;
+    this.position.x -= outX * pen;
+    this.position.z -= outZ * pen;
+
+    // Absorb the outward velocity like a real rail impact (light bounce).
+    const vOut = this.velocity.x * outX + this.velocity.z * outZ;
+    if (vOut > 0) {
+      const kill = vOut * 1.35;
+      this.velocity.x -= outX * kill;
+      this.velocity.z -= outZ * kill;
+      this.u = this.velocity.x * fwdX + this.velocity.z * fwdZ;
+      this.v = this.velocity.x * (-fwdZ) + this.velocity.z * (fwdX);
+      this.justHitWall = true;
+      this.hitImpact = Math.min(1, vOut * 0.08);
+    }
+
+    // Kill the residual slide.
+    this.v *= 0.8;
   }
 
   // ------------------------------------------------------------------

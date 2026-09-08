@@ -305,7 +305,8 @@ export class ChunkManager {
         for (let k = 0; k < pts.length; k++) {
           const f = flagsFn(k, pts[k]);
           if (f & 1) {
-            // rails along bridge edges (sample spacing ≈ 6 m = rail length)
+            // rails along bridge edges (rail spans 4 m; stretched 1.5x so the
+            // ~6 m sample spacing closes into a continuous barrier)
             const p = pts[k];
             const rx = -p.tz, rz = p.tx;
               for (const side of [-1, 1]) {
@@ -315,7 +316,7 @@ export class ChunkManager {
                   new THREE.Quaternion().setFromUnitVectors(
                     new THREE.Vector3(1, 0, 0),
                     new THREE.Vector3(p.tx, 0, p.tz).normalize()),
-                  new THREE.Vector3(1, 1, 1)
+                  new THREE.Vector3(1.5, 1, 1)
                 ));
                 structParts.push(g);
               }
@@ -380,6 +381,33 @@ export class ChunkManager {
         // collect flags alongside
         const flagsArr = pts.map((p) => net.elevAt(r, p.u).flags);
         addRibbon(pts, r.halfWidth, kind, (k) => flagsArr[k]);
+
+        // ---- highway guardrail fences --------------------------------------
+        // Surface sections of highways get a continuous barrier on both
+        // edges (bridges already got rails from the flags handler above,
+        // and the vehicle physics contains the car with an invisible wall
+        // on fenced roads). Rails are stretched 1.5x (~6 m) so consecutive
+        // 6 m samples meet end-to-end.
+        if (r.type === ROAD.HIGHWAY) {
+          const hw = r.halfWidth;
+          const off = hw + 0.5;
+          for (let k = 0; k < pts.length; k++) {
+            if (flagsArr[k] & 1) continue; // bridges already have rails
+            const p = pts[k];
+            const rx = -p.tz, rz = p.tx;
+            for (const side of [-1, 1]) {
+              const g = duplicateGeometry(railGeoCache);
+              g.applyMatrix4(new THREE.Matrix4().compose(
+                new THREE.Vector3(p.x + rx * side * off, p.y + 0.02, p.z + rz * side * off),
+                new THREE.Quaternion().setFromUnitVectors(
+                  new THREE.Vector3(1, 0, 0),
+                  new THREE.Vector3(p.tx, 0, p.tz).normalize()),
+                new THREE.Vector3(1.5, 1, 1)
+              ));
+              structParts.push(g);
+            }
+          }
+        }
       } else if (r.kind === 'ring') {
         this._buildRing(r, minX, minZ, maxX, maxZ, addRibbon);
       } else if (r.kind === 'street') {
