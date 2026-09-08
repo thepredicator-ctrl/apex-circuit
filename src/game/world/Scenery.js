@@ -46,23 +46,26 @@ function speckle(ctx, w, h, count, alpha, dark, light) {
 export function buildRoadTexture(kind, aniso) {
   const W = 512, H = 512;
   const tex = canvasTexture(W, H, (ctx) => {
-    ctx.fillStyle = '#55514a';                       // gravel shoulder
+    // Gravel shoulder — slightly warmer tone with stone aggregate speckle
+    ctx.fillStyle = '#605a50';
     ctx.fillRect(0, 0, W, H);
-    speckle(ctx, W, H, 2400, 0.5, '#46423a', '#67635a');
+    speckle(ctx, W, H, 3200, 0.45, '#4d483e', '#746e62');
+    speckle(ctx, W, H, 800, 0.18, '#3a3630', '#858074');
 
     const asphalt = (x0, x1) => {
-      ctx.fillStyle = '#2e3138';
+      ctx.fillStyle = '#35373c';
       ctx.fillRect(x0, 0, x1 - x0, H);
       ctx.save();
       ctx.beginPath(); ctx.rect(x0, 0, x1 - x0, H); ctx.clip();
-      speckle(ctx, W, H, 2600, 0.22, '#23252a', '#3a3d44');
+      speckle(ctx, W, H, 3400, 0.20, '#2a2c30', '#414550');
+      speckle(ctx, W, H, 600, 0.08, '#1e2024', '#4d5058');
       ctx.restore();
     };
     const line = (x, w, color) => {
       ctx.fillStyle = color;
       ctx.fillRect(x - w / 2, 0, w, H);
     };
-    const dash = (x, w, color, dashH = H * 0.30, gapH = H * 0.20) => {
+    const dash = (x, w, color, dashH = H * 0.28, gapH = H * 0.22) => {
       ctx.fillStyle = color;
       for (let y = 0; y < H; y += dashH + gapH) ctx.fillRect(x - w / 2, y, w, dashH);
     };
@@ -71,42 +74,53 @@ export function buildRoadTexture(kind, aniso) {
       // 4 lanes: asphalt from 12%..88%
       const ax0 = W * 0.115, ax1 = W * 0.885;
       asphalt(ax0, ax1);
-      line(ax0 + 16, 5, 'rgba(226,230,236,0.85)');
-      line(ax1 - 16, 5, 'rgba(226,230,236,0.85)');
-      line(W * 0.5, 6, 'rgba(240,236,190,0.9)');       // double yellow center
-      line(W * 0.5 - 9, 4, 'rgba(240,236,190,0.9)');
-      line(W * 0.5 + 9, 4, 'rgba(240,236,190,0.9)');
-      dash(W * 0.27, 4, 'rgba(226,230,236,0.75)');
-      dash(W * 0.73, 4, 'rgba(226,230,236,0.75)');
+      // reflective edge strips (slightly wider, brighter)
+      line(ax0 + 18, 6, 'rgba(230,234,240,0.88)');
+      line(ax1 - 18, 6, 'rgba(230,234,240,0.88)');
+      // reflective edge strip shadow (subtle depth)
+      line(ax0 + 23, 2, 'rgba(20,20,20,0.25)');
+      line(ax1 - 23, 2, 'rgba(20,20,20,0.25)');
+      // double yellow center (wider, warm amber)
+      line(W * 0.5, 7, 'rgba(224,200,110,0.92)');
+      line(W * 0.5 - 11, 5, 'rgba(224,200,110,0.92)');
+      line(W * 0.5 + 11, 5, 'rgba(224,200,110,0.92)');
+      // lane dividers — white dashed, good contrast
+      dash(W * 0.27, 4.5, 'rgba(230,234,240,0.8)');
+      dash(W * 0.73, 4.5, 'rgba(230,234,240,0.8)');
+      // rumble strip at edge (very faint texture)
+      speckle(ctx, W, H, 200, 0.12, '#50545c', '#282c30');
     } else if (kind === 'rural') {
       const ax0 = W * 0.10, ax1 = W * 0.90;
       asphalt(ax0, ax1);
-      line(ax0 + 14, 5, 'rgba(226,230,236,0.8)');
-      line(ax1 - 14, 5, 'rgba(226,230,236,0.8)');
-      dash(W * 0.5, 5, 'rgba(230,225,180,0.8)');
+      line(ax0 + 16, 5, 'rgba(228,232,238,0.82)');
+      line(ax1 - 16, 5, 'rgba(228,232,238,0.82)');
+      dash(W * 0.5, 5, 'rgba(226,220,170,0.82)');
     } else if (kind === 'street') {
       const ax0 = W * 0.06, ax1 = W * 0.94;
       asphalt(ax0, ax1);
-      // curbs
-      ctx.fillStyle = '#8f8d88';
-      ctx.fillRect(ax0 - 8, 0, 8, H);
-      ctx.fillRect(ax1, 0, 8, H);
-      dash(W * 0.5, 4, 'rgba(226,230,236,0.65)', H * 0.2, H * 0.3);
-      // crosswalk hint at v=0 (intersections reuse tiling)
+      // concrete curbs with shadow
+      ctx.fillStyle = '#98958e';
+      ctx.fillRect(ax0 - 10, 0, 10, H);
+      ctx.fillRect(ax1, 0, 10, H);
+      ctx.fillStyle = 'rgba(0,0,0,0.18)';
+      ctx.fillRect(ax0, 0, 2, H);
+      ctx.fillRect(ax1 - 2, 0, 2, H);
+      dash(W * 0.5, 4, 'rgba(228,232,238,0.6)', H * 0.2, H * 0.28);
     } else if (kind === 'dirt') {
       ctx.fillStyle = '#7a6748';
       ctx.fillRect(W * 0.12, 0, W * 0.76, H);
-      speckle(ctx, W, H, 2200, 0.4, '#5f5038', '#8f7c58');
+      speckle(ctx, W, H, 2800, 0.38, '#5f5038', '#8f7c58');
+      speckle(ctx, W, H, 400, 0.12, '#443628', '#a08d68');
       // wheel ruts
-      ctx.fillStyle = 'rgba(66,54,38,0.55)';
+      ctx.fillStyle = 'rgba(66,54,38,0.5)';
       ctx.fillRect(W * 0.30, 0, W * 0.09, H);
       ctx.fillRect(W * 0.61, 0, W * 0.09, H);
     } else {
-      // plain asphalt (ramps)
+      // plain asphalt (ramps) — slightly darker to distinguish from rural
       const ax0 = W * 0.12, ax1 = W * 0.88;
       asphalt(ax0, ax1);
-      line(ax0 + 12, 5, 'rgba(226,230,236,0.8)');
-      line(ax1 - 12, 5, 'rgba(226,230,236,0.8)');
+      line(ax0 + 14, 5, 'rgba(228,232,238,0.82)');
+      line(ax1 - 14, 5, 'rgba(228,232,238,0.82)');
     }
   }, { anisotropy: aniso });
   return tex;
@@ -114,9 +128,10 @@ export function buildRoadTexture(kind, aniso) {
 
 export function buildGroundTexture(aniso) {
   const tex = canvasTexture(256, 256, (ctx, w, h) => {
-    ctx.fillStyle = '#8a8a80';
+    ctx.fillStyle = '#7a8862';
     ctx.fillRect(0, 0, w, h);
-    speckle(ctx, w, h, 1600, 0.25, '#6f6f66', '#a0a096');
+    speckle(ctx, w, h, 2000, 0.30, '#6a7852', '#8e9c70');
+    speckle(ctx, w, h, 400, 0.15, '#5e6c48', '#a0b080');
   }, { anisotropy: aniso });
   return tex;
 }
@@ -125,12 +140,19 @@ export function buildGroundTexture(aniso) {
 export function buildFacadeTexture() {
   const W = 256, H = 256;
   const tex = canvasTexture(W, H, (ctx) => {
-    ctx.fillStyle = '#b8bcbf';
+    ctx.fillStyle = '#b5b9be';
     ctx.fillRect(0, 0, W, H);
-    // subtle concrete banding
+    // concrete banding with subtle horizontal grooves
     for (let y = 0; y < H; y += 32) {
-      ctx.fillStyle = 'rgba(0,0,0,0.06)';
+      ctx.fillStyle = 'rgba(0,0,0,0.05)';
       ctx.fillRect(0, y, W, 2);
+      ctx.fillStyle = 'rgba(255,255,255,0.03)';
+      ctx.fillRect(0, y + 2, W, 1);
+    }
+    // vertical grooves on facade (floor separation)
+    for (let x = 0; x < W; x += 32) {
+      ctx.fillStyle = 'rgba(0,0,0,0.04)';
+      ctx.fillRect(x, 0, 1, H);
     }
     // windows: 6 cols x 8 rows
     const cols = 6, rows = 8;
@@ -138,13 +160,21 @@ export function buildFacadeTexture() {
     const cw = (W - mx * 2) / cols, ch = (H - my * 2) / rows;
     for (let r = 0; r < rows; r++) {
       for (let c = 0; c < cols; c++) {
-        const x = mx + c * cw + cw * 0.18;
-        const y = my + r * ch + ch * 0.2;
-        const w = cw * 0.64, h = ch * 0.5;
-        ctx.fillStyle = '#1d2732';
+        const x = mx + c * cw + cw * 0.16;
+        const y = my + r * ch + ch * 0.18;
+        const w = cw * 0.68, h = ch * 0.52;
+        // window frame (dark concrete)
+        ctx.fillStyle = '#1a2028';
+        ctx.fillRect(x - 1, y - 1, w + 2, h + 2);
+        // glass pane (dark blue-grey)
+        ctx.fillStyle = '#192532';
         ctx.fillRect(x, y, w, h);
-        ctx.fillStyle = 'rgba(120,160,200,0.25)';
-        ctx.fillRect(x + 2, y + 2, w - 4, h * 0.4);
+        // sky reflection (subtle gradient at top of pane)
+        ctx.fillStyle = 'rgba(100,150,200,0.22)';
+        ctx.fillRect(x, y, w, h * 0.4);
+        // window mullion (vertical split)
+        ctx.fillStyle = 'rgba(0,0,0,0.18)';
+        ctx.fillRect(x + w * 0.49, y, w * 0.02, h);
       }
     }
   });
@@ -161,11 +191,22 @@ export function buildWindowsEmissive() {
     const cw = (W - mx * 2) / cols, ch = (H - my * 2) / rows;
     for (let r = 0; r < rows; r++) {
       for (let c = 0; c < cols; c++) {
-        if (Math.random() < 0.45) continue;    // some windows dark
-        const x = mx + c * cw + cw * 0.18;
-        const y = my + r * ch + ch * 0.2;
-        ctx.fillStyle = Math.random() < 0.7 ? '#ffdf9e' : '#cfe4ff';
-        ctx.fillRect(x, y, cw * 0.64, ch * 0.5);
+        // some windows dark (unoccupied, curtains, etc.)
+        if (Math.random() < 0.42) continue;
+        const x = mx + c * cw + cw * 0.16;
+        const y = my + r * ch + ch * 0.18;
+        const w = cw * 0.68, h = ch * 0.52;
+        const light = Math.random();
+        const color = light < 0.6
+          ? `rgba(255,220,155,${0.7 + light * 0.3})`   // warm incandescent
+          : `rgba(190,220,255,${0.6 + light * 0.2})`;  // cool fluorescent
+        ctx.fillStyle = color;
+        ctx.fillRect(x, y, w, h);
+        // light spill (subtle glow outside frame)
+        if (Math.random() < 0.18) {
+          ctx.fillStyle = 'rgba(255,220,155,0.08)';
+          ctx.fillRect(x - 2, y - 2, w + 4, h + 4);
+        }
       }
     }
   });
@@ -216,11 +257,11 @@ export class Scenery {
       map: this.groundTex, roughness: 1.0, metalness: 0, vertexColors: true
     });
     this.roadMats = {
-      highway: new THREE.MeshStandardMaterial({ map: this.texHighway, roughness: 0.92, metalness: 0 }),
-      rural: new THREE.MeshStandardMaterial({ map: this.texRural, roughness: 0.92, metalness: 0 }),
-      street: new THREE.MeshStandardMaterial({ map: this.texStreet, roughness: 0.94, metalness: 0 }),
+      highway: new THREE.MeshStandardMaterial({ map: this.texHighway, roughness: 0.88, metalness: 0.02 }),
+      rural: new THREE.MeshStandardMaterial({ map: this.texRural, roughness: 0.90, metalness: 0.01 }),
+      street: new THREE.MeshStandardMaterial({ map: this.texStreet, roughness: 0.92, metalness: 0.01 }),
       dirt: new THREE.MeshStandardMaterial({ map: this.texDirt, roughness: 1.0, metalness: 0 }),
-      ramp: new THREE.MeshStandardMaterial({ map: this.texRamp, roughness: 0.92, metalness: 0 })
+      ramp: new THREE.MeshStandardMaterial({ map: this.texRamp, roughness: 0.88, metalness: 0.02 })
     };
     this.matStructure = new THREE.MeshStandardMaterial({ color: 0x8b8981, roughness: 0.92, vertexColors: false });
     this.matTree = new THREE.MeshStandardMaterial({
@@ -241,8 +282,8 @@ export class Scenery {
     this.matLamp = new THREE.MeshStandardMaterial({ color: 0x3c4046, roughness: 0.6, metalness: 0.4 });
     this.matLampGlow = new THREE.MeshBasicMaterial({ color: 0xffd9a0, toneMapped: false });
     this.matWater = new THREE.MeshStandardMaterial({
-      color: 0x1c4d66, roughness: 0.12, metalness: 0.55,
-      transparent: true, opacity: 0.88
+      color: 0x1f5876, roughness: 0.14, metalness: 0.6,
+      transparent: true, opacity: 0.86
     });
     this.matRail = new THREE.MeshStandardMaterial({ color: 0xb8bcc0, roughness: 0.5, metalness: 0.6 });
     this.matMystery = new THREE.MeshStandardMaterial({
@@ -270,9 +311,10 @@ export class Scenery {
     t2trunk.translate(0, 0.95, 0);
     paintVerts(t2trunk, 0x63513c, 0x4e3e2c);
     const blobs = [
-      { r: 1.3, x: 0, y: 2.75, z: 0, top: 0x6f9a45, bot: 0x4e7030 },
-      { r: 0.95, x: 0.62, y: 2.25, z: 0.35, top: 0x7ca44e, bot: 0x547838 },
-      { r: 0.85, x: -0.55, y: 2.4, z: -0.3, top: 0x63903e, bot: 0x48682e }
+      { r: 1.45, x: 0, y: 2.9, z: 0, top: 0x6f9a45, bot: 0x4e7030 },
+      { r: 1.0, x: 0.68, y: 2.35, z: 0.4, top: 0x7ca44e, bot: 0x547838 },
+      { r: 0.9, x: -0.6, y: 2.5, z: -0.35, top: 0x63903e, bot: 0x48682e },
+      { r: 0.72, x: 0.15, y: 3.55, z: 0.1, top: 0x82ab54, bot: 0x5a7c3c }
     ];
     const parts = [t2trunk];
     for (const b of blobs) {
@@ -379,13 +421,24 @@ export class Scenery {
     // ---- street lamp --------------------------------------------------------
     const pole = new THREE.CylinderGeometry(0.07, 0.1, 6.4, 6);
     pole.translate(0, 3.2, 0);
-    const arm = new THREE.BoxGeometry(1.6, 0.08, 0.08);
-    arm.translate(0.75, 6.35, 0);
-    const head = new THREE.BoxGeometry(0.6, 0.1, 0.24);
-    head.translate(1.45, 6.3, 0);
-    const glow = new THREE.BoxGeometry(0.5, 0.04, 0.18);
-    glow.translate(1.45, 6.22, 0);
-    this.lampGeo = mergeGeometries([pole, arm, head], false);
+    // tapered top section
+    const poleTop = new THREE.CylinderGeometry(0.055, 0.075, 1.1, 6);
+    poleTop.translate(0, 6.1, 0);
+    // curved arm (approximated with a bent cylinder)
+    const arm = new THREE.CylinderGeometry(0.06, 0.06, 1.7, 6);
+    arm.translate(0.82, 6.35, 0);
+    arm.rotateZ(0.12);
+    // lamp head housing
+    const head = new THREE.BoxGeometry(0.62, 0.12, 0.28);
+    head.translate(1.5, 6.3, 0);
+    head.rotateZ(0.1);
+    // base plate
+    const base = new THREE.CylinderGeometry(0.16, 0.2, 0.16, 6);
+    base.translate(0, 0.08, 0);
+    const glow = new THREE.BoxGeometry(0.5, 0.05, 0.2);
+    glow.translate(1.5, 6.2, 0);
+    glow.rotateZ(0.1);
+    this.lampGeo = mergeGeometries([pole, poleTop, base, arm, head], false);
     this.lampGlowGeo = glow;
 
     // ---- building block (unit footprint, scaled per instance) --------------
@@ -410,13 +463,17 @@ export class Scenery {
     this.pylonGeo = py;
 
     // ---- guardrail segment (spans local X, 4 m) -----------------------------
-    const rpost1 = new THREE.BoxGeometry(0.08, 0.75, 0.08);
-    rpost1.translate(-1.9, 0.375, 0);
-    const rpost2 = new THREE.BoxGeometry(0.08, 0.75, 0.08);
-    rpost2.translate(1.9, 0.375, 0);
-    const rbeam = new THREE.BoxGeometry(4.0, 0.3, 0.05);
-    rbeam.translate(0, 0.62, 0);
-    this.railGeo = mergeGeometries([rpost1, rpost2, rbeam], false);
+    const rpost1 = new THREE.BoxGeometry(0.08, 0.8, 0.08);
+    rpost1.translate(-1.9, 0.4, 0);
+    const rpost2 = new THREE.BoxGeometry(0.08, 0.8, 0.08);
+    rpost2.translate(1.9, 0.4, 0);
+    // upper beam — wide face
+    const rbeam = new THREE.BoxGeometry(4.0, 0.22, 0.04);
+    rbeam.translate(0, 0.66, 0);
+    // lower beam — adds visual depth and shadow
+    const rbeam2 = new THREE.BoxGeometry(4.0, 0.12, 0.04);
+    rbeam2.translate(0, 0.36, 0.02);
+    this.railGeo = mergeGeometries([rpost1, rpost2, rbeam, rbeam2], false);
 
     // ---- mystery monolith ---------------------------------------------------
     const mono = new THREE.BoxGeometry(1.6, 9.0, 0.8);

@@ -67,8 +67,10 @@ const BUILDING_KIND = Object.freeze({
 });
 
 const BUILDING_COLORS = Object.freeze([
-  0x8d9296, 0x7d8288, 0x9aa0a4, 0x6f747a, 0xa39e94, 0x8a8f95,
-  0x9c8f7e, 0x767c82, 0xb0a99c, 0x84898f, 0x6a7076, 0x99a0a6
+  0x8a8e94, 0x909598, 0x9da2a6, 0x7a7e84, 0xa8a49a, 0x878c92,
+  0x9e9282, 0x747a80, 0xb2aca0, 0x8b9096, 0x6c7278, 0x9ca2a8,
+  0x847868, 0x98a2a8, 0x7d8488, 0xa6a094, 0x90969a, 0x828890,
+  0xb0aaa0, 0x8c9098, 0x7e8488, 0xa09a90, 0x92969a, 0x868a8e
 ]);
 
 const NAME_PARTS = Object.freeze({
@@ -91,15 +93,15 @@ const INDUSTRIAL_CONFIG = Object.freeze({
 });
 
 const BLOCK_ROLLS = Object.freeze({
-  VACANT: 0.07,
-  PARKING: 0.13,
-  PARK: 0.19,
+  VACANT: 0.05,
+  PARKING: 0.12,
+  PARK: 0.17,
 });
 
 const BUILDING_DIMS = Object.freeze({
-  TOWER_MEGA: { w: [18, 34], d: [18, 34], h: [30, 115] },
-  TOWER_CITY: { w: [16, 30], d: [16, 30], h: [18, 52] },
-  TOWER_SECONDARY: { w: [12, 20], d: [12, 20], h: [14, 34] },
+  TOWER_MEGA: { w: [18, 36], d: [18, 36], h: [32, 128] },
+  TOWER_CITY: { w: [16, 32], d: [16, 32], h: [20, 58] },
+  TOWER_SECONDARY: { w: [12, 22], d: [12, 22], h: [15, 38] },
   COMMERCIAL: { w: [10, 22], d: [10, 22], h: [7, 21] },
   INDUSTRIAL: { w: [26, 40], d: [16, 28], h: [7, 12] },
   INDUSTRIAL_SMALL: { w: [14, 24], d: [10, 22], h: [5, 10] },

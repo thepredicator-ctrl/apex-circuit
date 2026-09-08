@@ -122,6 +122,9 @@ const LOW_SPEED = Object.freeze({
   TIRE_DECAY: 0.92,
 });
 
+const SPIN_BLEED = 22;   // 1/s — traction-control rate that bleeds run-away
+                         // driven-wheel spin back toward the rolling reference
+
 // ============================================================================
 // Wheel Layout
 // ============================================================================
@@ -765,8 +768,12 @@ export class VehiclePhysics {
     // where the Pacejka force collapses — combined with phantom front-wheel
     // braking the car would sit still with the engine revving ("no control").
     // Applies to both drive directions (reverse torque is negative).
+    // Set at 1.0 (the Pacejka D_LONG peak) so a wheel can never be asked to
+    // deliver more torque than the contact patch can physically sustain —
+    // sustained over-torque is what produced the excessive, run-away wheel
+    // spin on hard throttle.
     for (const i of REAR_AXLE) {
-      const maxTq = this._getSurfaceMu(i) * this.wheelFz[i] * TIRE.RADIUS * 1.05;
+      const maxTq = this._getSurfaceMu(i) * this.wheelFz[i] * TIRE.RADIUS * 1.0;
       this.wheelDriveTq[i] = Math.sign(this.wheelDriveTq[i]) * Math.min(Math.abs(this.wheelDriveTq[i]), maxTq);
     }
 
@@ -851,6 +858,22 @@ export class VehiclePhysics {
       this.wheelOmega[i] += (target - this.wheelOmega[i]) * Math.min(1, ROLL_COUPLING * dt);
     }
 
+    // Traction control (driven wheels): if a driven wheel's surface speed
+    // runs away beyond the contact patch rolling reference, bleed its excess
+    // angular velocity so it cannot keep spinning up against the chassis.
+    // Blends softly at low chassis speed (launches still chirp briefly) and
+    // hard once the car is rolling and grip is back.
+    for (const i of REAR_AXLE) {
+      if (this.wheelDriveTq[i] === 0) continue;
+      const refOmega = Math.abs(this.u) / TIRE.RADIUS;
+      const sign = Math.sign(this.u) || 1;
+      const diffOmega = this.wheelOmega[i] - refOmega * sign;
+      if (this.wheelOmega[i] * sign > refOmega) {
+        const bleed = Math.min(1, Math.abs(diffOmega) / refOmega) * SPIN_BLEED * dt;
+        this.wheelOmega[i] -= diffOmega * bleed;
+      }
+    }
+
     for (let i = 0; i < 4; i++) {
       const netTq = this.wheelDriveTq[i] + this.wheelBrakeTq[i] - this.wheelFx[i] * TIRE.RADIUS;
       const alpha = netTq / TIRE.INERTIA;
@@ -863,7 +886,11 @@ export class VehiclePhysics {
       // Wheelspin detection
       const vWheel = Math.abs(this.wheelOmega[i] * TIRE.RADIUS);
       const vChassis = Math.abs(this.u);
-      if (i >= 2 && vWheel > vChassis * 1.3 && this.wheelDriveTq[i] > 100) {
+      // Only flag meaningful slip — below 4 m/s the contact patch reference is too
+      // close to zero for the ratio to be useful, and hard-launch chirp at low
+      // speed is expected and desirable; tighten to a 15% slip ratio at any
+      // meaningful speed so only real sustained wheelspin registers.
+      if (i >= 2 && vChassis > 4 && vWheel > vChassis * 1.15 && this.wheelDriveTq[i] > 100) {
         this.wheelspin = true;
       }
     }
