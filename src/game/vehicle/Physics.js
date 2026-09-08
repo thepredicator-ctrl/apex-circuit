@@ -106,18 +106,20 @@ const STEER = Object.freeze({
   FADE_EXP: 0.85,
   ACKERMANN: 0.18,
 
-  // --- reworked steering model -------------------------------------
-  // Speed-sensitive ratio: how much the effective wheel angle and the
-  // steering authority decay per unit speed beyond steerFadeSpeed.
-  RATIO_FADE: 0.55,       // fraction of lock available at very high speed
+  // --- simplified steering model ------------------------------------
+  // Speed-sensitive ratio is handled by CAR.steerFastFrac/steerFadeSpeed
+  // (the old slip-based understeer-easing stage was removed in favor of a
+  // single rate-limited rack move with self-centering).
   CENTER_SPEED: 3.0,      // m/s above which self-centering engages fully
   CENTER_RATE: 2.2,       // 1/s — aligning torque that returns the wheel to 0
   RATE_FADE_SPEED: 26,    // m/s where steering rack rate starts to drop
   RATE_FADE_FLOOR: 0.45,  // fraction of rack rate retained at speed
-  UNDERSTEER_K: 0.55,     // strength of understeer easing (0..1)
   GRIP_MIN: 0.35,         // grip multiplier floor for steering authority
   REVERSAL_K: 1.6,        // how fast the wheel reverses direction (counter-steer)
 });
+
+// Scratch array reused by every wheel-load pass (frame-alloc avoidance).
+const WHEEL_LOAD_TARGETS = new Float64Array(4);
 
 const SURFACE_MU = Object.freeze({
   ASPHALT: 1.0,
@@ -582,11 +584,10 @@ export class VehiclePhysics {
     // ---- 2. Grip-aware authority -----------------------------------------
     // On low-grip surfaces (grass, dirt, wet) the front axle cannot hold as
     // much slip angle, so commanding the full road lock would just plough
-    // straight. Scale authority with the combined effect of the surface the
-    // car is on AND the weather grip multiplier (rain/storm reduce grip).
+    // straight. Scale authority with the surface grip. _getSurfaceMu already
+    // includes the weather grip multiplier, so no double-multiplication here.
     const surfaceMu = this._getSurfaceMu(W.FL); // 0.42 grass .. 1.0 asphalt
-    const gripEff = clamp(this.gripMul * surfaceMu, 0.3, 1.2);
-    const gripNorm = clamp((gripEff - 0.3) / 0.9, 0, 1); // 0..1 across the range
+    const gripNorm = clamp((surfaceMu - 0.3) / 0.9, 0, 1); // 0..1 across the range
     const gripAuth = STEER.GRIP_MIN + (1 - STEER.GRIP_MIN) * gripNorm;
     const steerLock = maxSteer * gripAuth;
 
@@ -595,7 +596,6 @@ export class VehiclePhysics {
     // speed (real racks self-center harder the faster you go). It eases the
     // commanded offset and would, absent driver input, bleed the wheel to 0.
     const centerGain = lerp(0, STEER.CENTER_RATE, clamp(vAbsU / STEER.CENTER_SPEED, 0, 1));
-    const selfCenter = this._delta * centerGain * dt;
 
     // ---- 4. Steering-rate saturation --------------------------------------
     // The rack has a finite rate that itself falls off at speed, so
@@ -606,28 +606,15 @@ export class VehiclePhysics {
       * lerp(1, STEER.RATE_FADE_FLOOR, rateFade)
       * (Math.sign(this._delta) === Math.sign(steerInput) ? 1 : STEER.REVERSAL_K);
 
-    // ---- 5. Lateral-grip understeer easing ------------------------------
-    // As the front axle approaches its lateral-grip limit (large slip angle
-    // at speed), further steer adds little yaw — the tire is saturated. Ease
-    // the commanded angle smoothly toward the limit instead of sitting at
-    // hard lock and ploughing straight. Uses the actual front slip angle so
-    // mid-range steering stays proportionate and only the saturated regime
-    // eases off.
-    let ueGain = 1.0;
-    if (vAbsU > 6) {
-      const frontSlip = this.slipAngleFront; // radians, grows with demand
-      const sat = Math.min(1, Math.abs(frontSlip) / 0.16); // 0..1 saturation (~9° grip peak)
-      const speedBoost = clamp((vAbsU - 6) / 14, 0.3, 1);
-      ueGain = 1.0 - STEER.UNDERSTEER_K * sat * speedBoost;
-    }
-
-    const targetDelta = steerInput * steerLock * ueGain - selfCenter;
-
-    // ---- 6. Move the wheel on the rack ------------------------------------
+    // ---- 5. Move the wheel on the rack ------------------------------------
+    // Single rate-limited step toward the commanded target, with the
+    // self-centering force folded into the target so it fights driver input
+    // only by the amount the alignment torque demands.
+    const targetDelta = steerInput * steerLock - this._delta * centerGain * dt;
     const dDelta = clamp(targetDelta - this._delta, -rackRate * dt, rackRate * dt);
     this._delta += dDelta;
 
-    // ---- 7. Ackermann geometry --------------------------------------------
+    // ---- 6. Ackermann geometry --------------------------------------------
     // Scale the Ackermann extra with how open the steering is and only outer
     // lock — proportional Ackermann keeps the inner wheel tighter on real
     // steering geometry, which the per-wheel slip model then exploits.
@@ -670,7 +657,7 @@ export class VehiclePhysics {
     const dFzLatR = dFzLatTotal * (1 - SUSP.ROLL_FRONT);
     const latDir = Math.sign(ay) || 1;
 
-    const targets = new Float64Array(4);
+    const targets = WHEEL_LOAD_TARGETS;
     targets[W.FL] = staticF / 2 + FzAeroF / 2 + dFzLongF / 2 - dFzLatF / 2 * latDir;
     targets[W.FR] = staticF / 2 + FzAeroF / 2 + dFzLongF / 2 + dFzLatF / 2 * latDir;
     targets[W.RL] = staticR / 2 + FzAeroR / 2 + dFzLongR / 2 - dFzLatR / 2 * latDir;

@@ -20,7 +20,7 @@
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { WORLD, ROAD, ROAD_INFO } from '../core/Constants.js';
-import { mulberry32, hash2i, clamp } from '../core/Noise.js';
+import { mulberry32 } from '../core/Noise.js';
 import { BIOME_ID } from './Terrain.js';
 
 const CS = WORLD.chunkSize;
@@ -663,7 +663,7 @@ export class ChunkManager {
   _buildScatter(cx, cz, x0, z0, rec) {
     const { network, terrain, mystery, scenery, cities } = this.world;
     const q = this.q;
-    const rng = mulberry32((this.world.seed ^ (cx * 2654435761) ^ (cz * 40503)) >>> 0);
+    const rng = mulberry32((this.world.seed ^ Math.imul(cx, 2654435761) ^ Math.imul(cz, 40503)) >>> 0);
     const sDet = this.world.seed ^ 0x5ca7;
 
     const buckets = new Map();   // geoKey -> { geo, mat, items: [] }

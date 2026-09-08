@@ -459,7 +459,7 @@ export class World extends THREE.EventDispatcher {
     this.group.name = 'World';
 
     // Subsystems
-    this.scenery = new Scenery(anisotropy);
+    this.scenery = new Scenery(this._seed, anisotropy);
     this.network = new RoadNetwork(this._seed);
     this.terrain = this.network.terrain;
     this.cities = this.network.cities;

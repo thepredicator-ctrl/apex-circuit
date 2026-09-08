@@ -7,7 +7,7 @@
 
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
-import { mulberry32, hash2i } from '../core/Noise.js';
+import { mulberry32 } from '../core/Noise.js';
 
 // ------------------------------------------------------------ canvas utils
 
@@ -24,13 +24,13 @@ export function canvasTexture(w, h, draw, opts = {}) {
   return tex;
 }
 
-function speckle(ctx, w, h, count, alpha, dark, light) {
+function speckle(ctx, w, h, count, alpha, dark, light, rng = Math.random) {
   for (let i = 0; i < count; i++) {
-    const x = Math.random() * w;
-    const y = Math.random() * h;
-    const s = 1 + Math.random() * 2;
-    ctx.fillStyle = Math.random() < 0.5 ? dark : light;
-    ctx.globalAlpha = alpha * Math.random();
+    const x = rng() * w;
+    const y = rng() * h;
+    const s = 1 + rng() * 2;
+    ctx.fillStyle = rng() < 0.5 ? dark : light;
+    ctx.globalAlpha = alpha * rng();
     ctx.fillRect(x, y, s, s);
   }
   ctx.globalAlpha = 1;
@@ -43,22 +43,22 @@ function speckle(ctx, w, h, count, alpha, dark, light) {
  * hwSpan = half-width in meters the texture spans (cross-section repeats
  * symmetric); we paint: shoulder | edge line | lanes | center | lanes | edge | shoulder
  */
-export function buildRoadTexture(kind, aniso) {
+export function buildRoadTexture(kind, aniso, rng = Math.random) {
   const W = 512, H = 512;
   const tex = canvasTexture(W, H, (ctx) => {
     // Gravel shoulder — slightly warmer tone with stone aggregate speckle
     ctx.fillStyle = '#605a50';
     ctx.fillRect(0, 0, W, H);
-    speckle(ctx, W, H, 3200, 0.45, '#4d483e', '#746e62');
-    speckle(ctx, W, H, 800, 0.18, '#3a3630', '#858074');
+    speckle(ctx, W, H, 3200, 0.45, '#4d483e', '#746e62', rng);
+    speckle(ctx, W, H, 800, 0.18, '#3a3630', '#858074', rng);
 
     const asphalt = (x0, x1) => {
       ctx.fillStyle = '#35373c';
       ctx.fillRect(x0, 0, x1 - x0, H);
       ctx.save();
       ctx.beginPath(); ctx.rect(x0, 0, x1 - x0, H); ctx.clip();
-      speckle(ctx, W, H, 3400, 0.20, '#2a2c30', '#414550');
-      speckle(ctx, W, H, 600, 0.08, '#1e2024', '#4d5058');
+      speckle(ctx, W, H, 3400, 0.20, '#2a2c30', '#414550', rng);
+      speckle(ctx, W, H, 600, 0.08, '#1e2024', '#4d5058', rng);
       ctx.restore();
     };
     const line = (x, w, color) => {
@@ -88,7 +88,7 @@ export function buildRoadTexture(kind, aniso) {
       dash(W * 0.27, 4.5, 'rgba(230,234,240,0.8)');
       dash(W * 0.73, 4.5, 'rgba(230,234,240,0.8)');
       // rumble strip at edge (very faint texture)
-      speckle(ctx, W, H, 200, 0.12, '#50545c', '#282c30');
+      speckle(ctx, W, H, 200, 0.12, '#50545c', '#282c30', rng);
     } else if (kind === 'rural') {
       const ax0 = W * 0.10, ax1 = W * 0.90;
       asphalt(ax0, ax1);
@@ -109,8 +109,8 @@ export function buildRoadTexture(kind, aniso) {
     } else if (kind === 'dirt') {
       ctx.fillStyle = '#7a6748';
       ctx.fillRect(W * 0.12, 0, W * 0.76, H);
-      speckle(ctx, W, H, 2800, 0.38, '#5f5038', '#8f7c58');
-      speckle(ctx, W, H, 400, 0.12, '#443628', '#a08d68');
+      speckle(ctx, W, H, 2800, 0.38, '#5f5038', '#8f7c58', rng);
+      speckle(ctx, W, H, 400, 0.12, '#443628', '#a08d68', rng);
       // wheel ruts
       ctx.fillStyle = 'rgba(66,54,38,0.5)';
       ctx.fillRect(W * 0.30, 0, W * 0.09, H);
@@ -126,12 +126,12 @@ export function buildRoadTexture(kind, aniso) {
   return tex;
 }
 
-export function buildGroundTexture(aniso) {
+export function buildGroundTexture(aniso, rng = Math.random) {
   const tex = canvasTexture(256, 256, (ctx, w, h) => {
     ctx.fillStyle = '#7a8862';
     ctx.fillRect(0, 0, w, h);
-    speckle(ctx, w, h, 2000, 0.30, '#6a7852', '#8e9c70');
-    speckle(ctx, w, h, 400, 0.15, '#5e6c48', '#a0b080');
+    speckle(ctx, w, h, 2000, 0.30, '#6a7852', '#8e9c70', rng);
+    speckle(ctx, w, h, 400, 0.15, '#5e6c48', '#a0b080', rng);
   }, { anisotropy: aniso });
   return tex;
 }
@@ -181,7 +181,7 @@ export function buildFacadeTexture() {
   return tex;
 }
 
-export function buildWindowsEmissive() {
+export function buildWindowsEmissive(rng = Math.random) {
   const W = 256, H = 256;
   return canvasTexture(W, H, (ctx) => {
     ctx.fillStyle = '#000000';
@@ -192,18 +192,18 @@ export function buildWindowsEmissive() {
     for (let r = 0; r < rows; r++) {
       for (let c = 0; c < cols; c++) {
         // some windows dark (unoccupied, curtains, etc.)
-        if (Math.random() < 0.42) continue;
+        if (rng() < 0.42) continue;
         const x = mx + c * cw + cw * 0.16;
         const y = my + r * ch + ch * 0.18;
         const w = cw * 0.68, h = ch * 0.52;
-        const light = Math.random();
+        const light = rng();
         const color = light < 0.6
           ? `rgba(255,220,155,${0.7 + light * 0.3})`   // warm incandescent
           : `rgba(190,220,255,${0.6 + light * 0.2})`;  // cool fluorescent
         ctx.fillStyle = color;
         ctx.fillRect(x, y, w, h);
         // light spill (subtle glow outside frame)
-        if (Math.random() < 0.18) {
+        if (rng() < 0.18) {
           ctx.fillStyle = 'rgba(255,220,155,0.08)';
           ctx.fillRect(x - 2, y - 2, w + 4, h + 4);
         }
@@ -234,21 +234,23 @@ function paintVerts(geo, hexTop, hexBottom) {
 }
 
 export class Scenery {
-  constructor(aniso = 4) {
+  constructor(seed = 0, aniso = 4) {
+    this._rng = mulberry32((seed ^ 0x9e3779b9) >>> 0);
     this.buildTextures(aniso);
     this.buildMaterials();
     this.buildGeometries();
   }
 
   buildTextures(aniso) {
-    this.texHighway = buildRoadTexture('highway', aniso);
-    this.texRural = buildRoadTexture('rural', aniso);
-    this.texStreet = buildRoadTexture('street', aniso);
-    this.texDirt = buildRoadTexture('dirt', aniso);
-    this.texRamp = buildRoadTexture('ramp', aniso);
+    const rng = this._rng;
+    this.texHighway = buildRoadTexture('highway', aniso, rng);
+    this.texRural = buildRoadTexture('rural', aniso, rng);
+    this.texStreet = buildRoadTexture('street', aniso, rng);
+    this.texDirt = buildRoadTexture('dirt', aniso, rng);
+    this.texRamp = buildRoadTexture('ramp', aniso, rng);
     this.texFacade = buildFacadeTexture();
-    this.texWindows = buildWindowsEmissive();
-    this.groundTex = buildGroundTexture(aniso);
+    this.texWindows = buildWindowsEmissive(rng);
+    this.groundTex = buildGroundTexture(aniso, rng);
     this.groundTex.repeat.set(1, 1);
   }
 
@@ -368,7 +370,7 @@ export class Scenery {
     for (let i = 0; i < 4; i++) {
       const br = new THREE.CylinderGeometry(0.04, 0.08, 1.2, 4);
       br.translate(0, 0.6, 0);
-      br.rotateZ(0.7 + Math.random() * 0.5);
+      br.rotateZ(0.7 + this._rng() * 0.5);
       br.rotateY((i / 4) * Math.PI * 2);
       br.translate(0, 1.2 + i * 0.3, 0);
       paintVerts(br, 0x4a4238, 0x332c24);
@@ -501,7 +503,7 @@ export class Scenery {
     // ---- stone circle rock --------------------------------------------------
     const stone = new THREE.BoxGeometry(1.0, 3.4, 0.7);
     stone.translate(0, 1.7, 0);
-    stone.rotateZ((Math.random() - 0.5) * 0.12);
+    stone.rotateZ((this._rng() - 0.5) * 0.12);
     this.stoneGeo = paintVerts(stone, 0x6b6d70, 0x47494c);
   }
 }

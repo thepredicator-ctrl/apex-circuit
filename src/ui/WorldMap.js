@@ -191,7 +191,7 @@ export class WorldMap {
         ctx.font = '700 11px system-ui, sans-serif';
         ctx.textAlign = 'center';
         const label = c.name.toUpperCase() +
-          (c.size === 3 ? ' ★' : c.size === 2 ? '' : '');
+          (c.size === 3 ? ' ★' : '');
         ctx.fillText(label, wx(c.x), wz(c.z) - Math.max(3, rr) - 5);
       }
     }

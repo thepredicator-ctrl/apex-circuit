@@ -12,7 +12,7 @@
  * forest, desert, mountain, snow — all deterministic from the world seed.
  */
 
-import { vnoise1, vnoise2, fbm2, ridged2, smoothstep, clamp, lerp } from '../core/Noise.js';
+import { vnoise2, fbm2, ridged2, smoothstep, clamp, lerp } from '../core/Noise.js';
 import { WORLD } from '../core/Constants.js';
 import { BiomeSystem, BIOME } from './BiomeSystem.js';
 import { Hydrology } from './Hydrology.js';
@@ -126,7 +126,7 @@ export class Terrain {
     return fbm2(x / 2600, z / 2600, this.sMoist, 2);
   }
 
-  biome(x, z, y = null, slope = 0) {
+  biome(x, z, y = null) {
     if (y === null) y = this.height(x, z);
     const sample = this.biomes.sample(x, z);
     return sample.biome.id;

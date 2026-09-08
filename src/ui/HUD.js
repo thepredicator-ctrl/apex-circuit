@@ -11,6 +11,7 @@
 
 import { Minimap } from './Minimap.js';
 import { WorldMap } from './WorldMap.js';
+import { BIOME_NAME } from '../game/world/Terrain.js';
 
 const TEMPLATE = `
 <div class="hud" id="hud">
@@ -427,7 +428,7 @@ export class HUD {
         region = city.name.toUpperCase();
       } else {
         const b = ctx.world.terrain.biome(phys.position.x, phys.position.z);
-        region = ['OCEAN', 'BEACH', 'DESERT', 'SAVANNA', 'GRASSLAND', 'FOREST', 'RAINFOREST', 'TAIGA', 'TUNDRA', 'SNOW', 'MOUNTAIN', 'VOLCANIC'][b] || 'PLAINS';
+        region = BIOME_NAME[b] || 'PLAINS';
         if (ctx.world.mystery.intensity(phys.position.x, phys.position.z) > 0.45) {
           region = 'THE DEEP — ' + region;
         }

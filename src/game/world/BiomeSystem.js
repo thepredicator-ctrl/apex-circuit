@@ -6,7 +6,7 @@
  * carries terrain tint, vegetation rules, and city-architecture hints.
  */
 
-import { mulberry32, vnoise2, vnoise1, clamp, lerp } from '../core/Noise.js';
+import { vnoise2, clamp } from '../core/Noise.js';
 
 // ============================================================================
 // Biome Registry

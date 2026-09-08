@@ -11,9 +11,12 @@ const MAX = 90;
 const VERT = /* glsl */`
   attribute float aScale;
   attribute float aAlpha;
+  attribute vec3 aColor;
   varying float vAlpha;
+  varying vec3 vColor;
   void main() {
     vAlpha = aAlpha;
+    vColor = aColor;
     vec4 mv = modelViewMatrix * vec4(position, 1.0);
     gl_PointSize = aScale * (240.0 / max(-mv.z, 1.0));
     gl_Position = projectionMatrix * mv;
@@ -21,14 +24,14 @@ const VERT = /* glsl */`
 `;
 
 const FRAG = /* glsl */`
-  uniform vec3 uColor;
   varying float vAlpha;
+  varying vec3 vColor;
   void main() {
     vec2 c = gl_PointCoord - 0.5;
     float d = length(c);
     float mask = smoothstep(0.5, 0.12, d);
     if (mask <= 0.001) discard;
-    gl_FragColor = vec4(uColor, vAlpha * mask);
+    gl_FragColor = vec4(vColor, vAlpha * mask);
   }
 `;
 
@@ -38,6 +41,7 @@ export class Effects {
     this.positions = new Float32Array(MAX * 3);
     this.scales = new Float32Array(MAX);
     this.alphas = new Float32Array(MAX);
+    this.colors = new Float32Array(MAX * 3);
     this.life = new Float32Array(MAX);
     this.maxLife = new Float32Array(MAX);
     this.vel = new Float32Array(MAX * 3);
@@ -46,10 +50,10 @@ export class Effects {
     geo.setAttribute('position', new THREE.BufferAttribute(this.positions, 3).setUsage(THREE.DynamicDrawUsage));
     geo.setAttribute('aScale', new THREE.BufferAttribute(this.scales, 1).setUsage(THREE.DynamicDrawUsage));
     geo.setAttribute('aAlpha', new THREE.BufferAttribute(this.alphas, 1).setUsage(THREE.DynamicDrawUsage));
+    geo.setAttribute('aColor', new THREE.BufferAttribute(this.colors, 3).setUsage(THREE.DynamicDrawUsage));
     geo.setDrawRange(0, MAX);
 
     this.mat = new THREE.ShaderMaterial({
-      uniforms: { uColor: { value: new THREE.Color(0xd9d9d9) } },
       vertexShader: VERT,
       fragmentShader: FRAG,
       transparent: true,
@@ -86,9 +90,10 @@ export class Effects {
     this.alphas[i] = 0.34;
     this.maxLife[i] = 0.7 + Math.random() * 0.5;
     this.life[i] = this.maxLife[i];
-    if (colorHex !== null) {
-      this.mat.uniforms.uColor.value.setHex(colorHex);
-    }
+    const c = new THREE.Color(colorHex ?? 0xd9d9d9);
+    this.colors[i * 3] = c.r;
+    this.colors[i * 3 + 1] = c.g;
+    this.colors[i * 3 + 2] = c.b;
   }
 
   update(dt) {
@@ -115,6 +120,7 @@ export class Effects {
       g.attributes.position.needsUpdate = true;
       g.attributes.aScale.needsUpdate = true;
       g.attributes.aAlpha.needsUpdate = true;
+      g.attributes.aColor.needsUpdate = true;
     }
     this._dirty = alive > 0;
   }

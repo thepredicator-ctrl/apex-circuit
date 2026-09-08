@@ -6,7 +6,7 @@
  * and create lake basins in local minima.
  */
 
-import { vnoise2, vnoise1, clamp, lerp } from '../core/Noise.js';
+import { vnoise2, lerp } from '../core/Noise.js';
 
 const HYDRO = Object.freeze({
   RIVER_SCALE: 0.0009,

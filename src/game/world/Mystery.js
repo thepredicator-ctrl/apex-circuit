@@ -11,7 +11,7 @@
  */
 
 import * as THREE from 'three';
-import { mulberry32, hash2i, clamp, smoothstep } from '../core/Noise.js';
+import { mulberry32, clamp, smoothstep } from '../core/Noise.js';
 import { MYSTERY } from '../core/Constants.js';
 
 const CS = 192;

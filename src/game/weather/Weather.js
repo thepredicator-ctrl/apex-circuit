@@ -57,9 +57,9 @@ export class Weather {
     const alp = new Float32Array(maxDrops * 2);
     this.dropPos = new Float32Array(maxDrops * 3);
     for (let i = 0; i < maxDrops; i++) {
-      this.dropPos[i * 3] = (Math.random() - 0.5) * 70;
-      this.dropPos[i * 3 + 1] = Math.random() * 26;
-      this.dropPos[i * 3 + 2] = (Math.random() - 0.5) * 70;
+      this.dropPos[i * 3] = (this.rng() - 0.5) * 70;
+      this.dropPos[i * 3 + 1] = this.rng() * 26;
+      this.dropPos[i * 3 + 2] = (this.rng() - 0.5) * 70;
     }
     const geo = new THREE.BufferGeometry();
     geo.setAttribute('position', new THREE.BufferAttribute(pos, 3).setUsage(THREE.DynamicDrawUsage));
@@ -134,9 +134,9 @@ export class Weather {
         this.dropPos[i * 3 + 1] -= fall * (0.8 + (i % 5) * 0.08);
         if (this.dropPos[i * 3 + 1] < -2) {
           // respawn above camera
-          this.dropPos[i * 3] = (Math.random() - 0.5) * 70;
-          this.dropPos[i * 3 + 1] = 24 + Math.random() * 8;
-          this.dropPos[i * 3 + 2] = (Math.random() - 0.5) * 70;
+          this.dropPos[i * 3] = (this.rng() - 0.5) * 70;
+          this.dropPos[i * 3 + 1] = 24 + this.rng() * 8;
+          this.dropPos[i * 3 + 2] = (this.rng() - 0.5) * 70;
         }
         const o = i * 6;
         const x = camPos.x + this.dropPos[i * 3];

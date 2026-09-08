@@ -165,7 +165,6 @@ export class Traffic {
     const pick = this._pickRoute(px, pz);
     if (!pick) return;
 
-    const d = this.world.network.groundAt(pick.route.kind === 'ring' ? 1e9 : 0, 0);
     const dir = this.rng() < 0.5 ? 1 : -1;
     const ud = slot.userData;
     ud.active = true;
@@ -239,7 +238,7 @@ export class Traffic {
 
       // world position with lane offset (right of travel = (-tz, tx))
       const rx = -s.tz, rz = s.tx;
-      const px = s.x + rx * ud.lane * (ud.dir > 0 ? 1 : 1);
+      const px = s.x + rx * ud.lane;
       const pz = s.z + rz * ud.lane;
       v.position.set(px, s.y + 0.05, pz);
       const heading = Math.atan2(s.tx * ud.dir, s.tz * ud.dir);

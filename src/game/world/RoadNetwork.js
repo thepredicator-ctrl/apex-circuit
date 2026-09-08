@@ -24,7 +24,7 @@
  */
 
 import * as THREE from 'three';
-import { vnoise1, hash2i, mulberry32, clamp, lerp, smoothstep } from '../core/Noise.js';
+import { vnoise1, hash2i, clamp, lerp, smoothstep } from '../core/Noise.js';
 import { WORLD, ROAD } from '../core/Constants.js';
 import { Terrain } from './Terrain.js';
 import { Cities } from './Cities.js';
@@ -412,9 +412,8 @@ export class RoadNetwork {
     let blend = null;
     if (q && q.absPerp < q.halfWidth + 13) {
       const t = smoothstep(q.halfWidth, q.halfWidth + 13, q.absPerp);
-      const yRoad = q.absPerp <= q.halfWidth
-        ? q.y
-        : q.y; // road y just beyond edge — blend handles the skirt
+      // road y just beyond edge — blend handles the skirt
+      const yRoad = q.y;
       // never pull terrain ABOVE the road deck near a bridge
       const gap = q.y - this.terrain.height(x, z);
       if (gap < WORLD.viaductTrigger) {

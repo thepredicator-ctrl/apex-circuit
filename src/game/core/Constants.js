@@ -19,39 +19,8 @@ export const CAR = {
   aFront: 1.19,             // CG -> front axle (rear-biased ~48/52)
   bRear: 1.28,
   cgHeight: 0.44,
-  weightDistFront: 0.482,
   wheelRadius: 0.335,
   trackWidth: 1.60,
-  carHalfWidth: 0.92,
-
-  // --- aerodynamics --------------------------------------------------------
-  airDrag: 0.00040,
-  downforce: 0.42,          // sports car — planted at speed
-  downforceFront: 0.38,
-  rollingResistance: 0.013,
-  grassRollingResistance: 0.055,
-  grassDrag: 3.4,
-
-  // --- tires -----------------------------------------------------------------
-  muAsphalt: 1.26,
-  muGrass: 0.46,
-  tireBFront: 10.8,
-  tireCFront: 1.46,
-  tireBRear: 11.6,
-  tireCRear: 1.43,
-  loadSens: 0.055,
-  muLongScale: 1.08,
-  slipFalloff: 0.36,
-  relaxLength: 0.60,
-
-  // --- brakes ----------------------------------------------------------------
-  // Huge sports brakes + ABS. A full-stomp stop is short AND steerable.
-  brakeMaxDecel: 19.0,      // m/s² demanded at full pedal, before tire limits
-  brakeBiasFront: 0.62,
-  absPeakFrac: 0.94,
-  absFlutterHz: 46,
-  handbrakeDecel: 7.0,
-  handbrakeRearGrip: 0.40,
 
   // --- steering ---------------------------------------------------------------
   maxSteerRoad: 0.62,
@@ -61,9 +30,7 @@ export const CAR = {
   // --- powertrain ---------------------------------------------------------------
   maxSpeed: 89,             // m/s (~320 km/h theoretical)
   maxReverseSpeed: 11,
-  maxYawLowSpeed: 2.7,
-  minSteerSpeed: 1.2,
-  yawDamping: 4.5
+  maxYawLowSpeed: 2.7
 };
 
 export const TRANSMISSION = {

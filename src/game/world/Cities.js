@@ -11,7 +11,7 @@
  */
 
 import {
-  hash2i, hash3i, mulberry32, vnoise1, clamp, lerp
+  hash2i, mulberry32, vnoise1, clamp, lerp
 } from '../core/Noise.js';
 import { WORLD, ROAD } from '../core/Constants.js';
 
