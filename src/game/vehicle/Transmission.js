@@ -15,12 +15,17 @@
  *  - Exposes shifter animation state (x/z slot travel) for the cockpit model.
  */
 
+import * as THREE from 'three';
 import { CAR, TRANSMISSION as T } from '../core/Constants.js';
 
 export const GEAR_LABEL = { '-1': 'R', '0': 'N' };
 
-/** sequential shift pattern: index into this list */
-const SEQ = ['R', 'N', '1', '2', '3', '4', '5', '6', '7', '8'];
+/**
+ * Sequential shift pattern — must stay in sync with T.gearRatios.
+ * (gear N maps to SEQ index N+1; the transmission is a 7-speed, so the
+ * highest selectable gear is '7'.)
+ */
+const SEQ = ['R', 'N', '1', '2', '3', '4', '5', '6', '7'];
 
 /** shifter knob slot positions (x: -1 left..+1 right, z: 0 forward..1 back) */
 const SHIFTER_SLOTS = {
@@ -32,8 +37,7 @@ const SHIFTER_SLOTS = {
   4: [0, 0.9],
   5: [1.0, 0.1],
   6: [1.0, 0.9],
-  7: [1.9, 0.1],
-  8: [1.9, 0.9]
+  7: [1.9, 0.1]
 };
 
 export class Transmission {
@@ -84,8 +88,12 @@ export class Transmission {
   /** gear ratio including final drive (positive), 0 for neutral */
   _ratio(gear = this.gear) {
     if (gear === 0) return 0;
-    const g = gear < 0 ? T.reverseRatio : T.gearRatios[gear - 1];
-    return g * T.finalDrive;
+    // Clamp to the ratio table: an out-of-range gear (e.g. an 8th with a
+    // 7-speed 'box) must fall back to the tallest ratio, never NaN.
+    const g = gear < 0 ? T.reverseRatio : T.gearRatios[Math.min(Math.max(gear, 1), T.gearRatios.length) - 1];
+    if (!Number.isFinite(g)) return 0;
+    const ratio = g * T.finalDrive;
+    return Number.isFinite(ratio) ? ratio : 0;
   }
 
   /** crank rpm for a given forward wheel speed (signed) in the current gear */
@@ -107,7 +115,7 @@ export class Transmission {
   /** manual shift request: dir = +1 up / -1 down */
   shift(dir) {
     if (this.mode !== 'manual' || this.shifting) return false;
-    const target = THREEclamp(this.seqIdx + dir, 0, SEQ.length - 1);
+    const target = THREE.MathUtils.clamp(this.seqIdx + dir, 0, SEQ.length - 1);
     if (target === this.seqIdx) return false;
 
     // refuse a downshift that would blow far past the rev ceiling
@@ -115,6 +123,7 @@ export class Transmission {
     const g = label === 'R' ? -1 : label === 'N' ? 0 : parseInt(label, 10);
     if (g > 0 || g === -1) {
       const projected = Math.abs(this.rpmForWheelSpeed(this._lastVF ?? 0, g));
+      if (!Number.isFinite(projected)) return false;
       if (projected > T.rpmMaxSafe + 600) return false;
     }
     // refuse reverse while rolling forward fast (and vice versa)
@@ -278,7 +287,7 @@ export class Transmission {
       // clutch capacity clamp while slipping
       if (this.launching) {
         const cap = 9200;
-        this.driveForce = THREEclamp(this.driveForce, -cap, cap);
+        this.driveForce = THREE.MathUtils.clamp(this.driveForce, -cap, cap);
       }
 
       // engine braking when coasting in gear — always opposes the motion
@@ -288,7 +297,7 @@ export class Transmission {
       }
     }
 
-    this.rpmNorm = THREEclamp((this.rpm - T.idleRpm) / (T.redline - T.idleRpm), 0, 1.04);
+    this.rpmNorm = THREE.MathUtils.clamp((this.rpm - T.idleRpm) / (T.redline - T.idleRpm), 0, 1.04);
 
     // ---------- shifter animation ---------------------------------------------
     const label = this.gearLabel;
@@ -297,8 +306,4 @@ export class Transmission {
     this.shifterX += (slot[0] - this.shifterX) * k;
     this.shifterZ += (slot[1] - this.shifterZ) * k;
   }
-}
-
-function THREEclamp(v, a, b) {
-  return v < a ? a : v > b ? b : v;
 }

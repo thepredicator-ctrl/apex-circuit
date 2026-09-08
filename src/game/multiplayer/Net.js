@@ -23,6 +23,9 @@ function proxyCarGeo() {
 
 const INTERP_DELAY = 120;   // ms
 
+/** hard cap on concurrent remote cars — beyond this, new peers are ignored */
+const MAX_PEERS = 24;
+
 export class Net {
   constructor(scene) {
     this.scene = scene;
@@ -97,15 +100,24 @@ export class Net {
   }
 
   _onSnapshot(msg) {
-    if (!msg || !msg.players) return;
+    if (!msg || !Array.isArray(msg.players)) return;
     const now = performance.now();
-    this.ping = Math.max(0, Math.min(999, Date.now() - msg.t));
+    this.ping = Number.isFinite(msg.t)
+      ? Math.max(0, Math.min(999, Date.now() - msg.t))
+      : 0;
     const seen = new Set();
     for (const q of msg.players) {
-      if (q.i === this.myId) continue;
+      if (!q || q.i === this.myId) continue;
+      // never interpolate garbage — a single NaN field would poison the
+      // remote car's matrix until the peer drops
+      if (!Number.isFinite(q.x) || !Number.isFinite(q.y) ||
+          !Number.isFinite(q.z) || !Number.isFinite(q.h)) continue;
       seen.add(q.i);
       let p = this.peers.get(q.i);
-      if (!p) p = this._addPeer(q.i, q.n);
+      if (!p) {
+        if (this.peers.size >= MAX_PEERS) continue;
+        p = this._addPeer(q.i, q.n);
+      }
       p.buf.push({ t: now, x: q.x, y: q.y, z: q.z, h: q.h, s: q.s, st: q.st });
       if (p.buf.length > 30) p.buf.shift();
     }

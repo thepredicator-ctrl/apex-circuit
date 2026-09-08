@@ -44,6 +44,26 @@ export class ChunkManager {
     this._tmpScale = new THREE.Vector3();
     this._tmpEuler = new THREE.Euler();
     this._tmpColor = new THREE.Color();
+
+    // Every geometry/material produced by Scenery (plus the module-level
+    // template caches at the bottom of this file) is SHARED across chunks and
+    // must never be disposed by a chunk teardown — only per-chunk geometries
+    // (terrain, ribbon merges, structure merges, template duplicates, mystery
+    // obelisks, ...) are owned by the chunk they were built for. Track the
+    // shared set up front so _disposeChunk can tell them apart in O(1).
+    const s = this.world.scenery;
+    this._sharedGeo = new Set([
+      s.coniferGeo, s.broadleafGeo, s.palmGeo, s.cactusGeo, s.deadTreeGeo,
+      s.bushGeo, s.rockGeo, s.grassGeo, s.flowerGeo, s.fernGeo,
+      s.postGeo, s.lampGeo, s.lampGlowGeo, s.buildingGeo, s.buildingRoofGeo,
+      s.warehouseGeo, s.pylonGeo, s.railGeo,
+      s.monolithGeo, s.archGeo, s.wreckGeo, s.stoneGeo,
+      railGeoCache, pylonGeoCache, archGeoCache, portalGeoCache
+    ]);
+    this._sharedMat = new Set(Object.values(s.roadMats));
+    for (const k in s) {
+      if (s[k] && s[k].isMaterial) this._sharedMat.add(s[k]);
+    }
   }
 
   setQuality(q) {
@@ -130,8 +150,15 @@ export class ChunkManager {
   _disposeChunk(rec) {
     this.group.remove(rec.group);
     rec.group.traverse((o) => {
-      if (o.geometry) o.geometry.dispose();
-      // materials are shared — never disposed here
+      // dispose only the resources this chunk owns; shared scenery geometry
+      // and materials are built once and reused by every chunk
+      if (o.geometry && !this._sharedGeo.has(o.geometry)) o.geometry.dispose();
+      if (o.material) {
+        const mats = Array.isArray(o.material) ? o.material : [o.material];
+        for (const m of mats) {
+          if (m && !this._sharedMat.has(m)) m.dispose();
+        }
+      }
     });
   }
 
@@ -282,7 +309,7 @@ export class ChunkManager {
             const p = pts[k];
             const rx = -p.tz, rz = p.tx;
               for (const side of [-1, 1]) {
-                const g = railGeoCache.clone();
+                const g = duplicateGeometry(railGeoCache);
                 g.applyMatrix4(new THREE.Matrix4().compose(
                   new THREE.Vector3(p.x + rx * side * (hw + 0.4), p.y + 0.02, p.z + rz * side * (hw + 0.4)),
                   new THREE.Quaternion().setFromUnitVectors(
@@ -298,7 +325,7 @@ export class ChunkManager {
               const th = this.world.terrain.height(p.x, p.z);
               const drop = p.y - th - 0.4;
               if (drop > 2.5) {
-                const g = pylonGeoCache.clone();
+                const g = duplicateGeometry(pylonGeoCache);
                 g.applyMatrix4(new THREE.Matrix4().compose(
                   new THREE.Vector3(p.x, p.y - drop / 2 - 0.5, p.z),
                   new THREE.Quaternion().setFromUnitVectors(
@@ -314,7 +341,7 @@ export class ChunkManager {
             const prev = k > 0 ? (flagsFn(k - 1, pts[k - 1]) & 2) : 0;
             if (!prev) {
               // portal at gallery entrance
-              const pg = portalGeoCache.clone();
+              const pg = duplicateGeometry(portalGeoCache);
               pg.applyMatrix4(new THREE.Matrix4().compose(
                 new THREE.Vector3(p.x, p.y - 0.1, p.z),
                 new THREE.Quaternion().setFromUnitVectors(
@@ -324,7 +351,7 @@ export class ChunkManager {
               ));
               structParts.push(pg);
             }
-            const g = archGeoCache.clone();
+            const g = duplicateGeometry(archGeoCache);
             g.applyMatrix4(new THREE.Matrix4().compose(
               new THREE.Vector3(p.x, p.y - 0.1, p.z),
               new THREE.Quaternion().setFromUnitVectors(
@@ -831,4 +858,24 @@ let railGeoCache, pylonGeoCache, archGeoCache, portalGeoCache;
   const lintel = new THREE.BoxGeometry(30.4, 1.6, 2.4);
   lintel.translate(0, 7.0, 0);
   portalGeoCache = mergeGeometries([leg1, leg2, lintel], false);
+}
+
+/**
+ * Deep geometry copy with fresh typed arrays.
+ * three.js's BufferGeometry.clone() shares attribute arrays with the source,
+ * so applying a matrix to a clone would corrupt the template cache for every
+ * later chunk. duplicateGeometry() gives each instance its own buffers.
+ */
+function duplicateGeometry(src) {
+  const g = new THREE.BufferGeometry();
+  for (const name in src.attributes) {
+    const a = src.attributes[name];
+    g.setAttribute(name, new a.constructor(new a.array.constructor(a.array), a.itemSize, a.normalized));
+  }
+  if (src.index) {
+    const i = src.index;
+    g.setIndex(new i.constructor(new i.array.constructor(i.array), i.itemSize));
+  }
+  g.drawRange.set(src.drawRange.start, src.drawRange.count);
+  return g;
 }

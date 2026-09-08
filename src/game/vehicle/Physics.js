@@ -712,6 +712,17 @@ export class VehiclePhysics {
       this.wheelDriveTq[W.RR] = tqBase * (1 - bias) - Math.sign(dw) * DIFF.PRELOAD;
     }
 
+    // Tire-limit cap: a wheel cannot absorb more torque than its contact
+    // patch can produce (mu * Fz * R, Pacejka D_LONG ~1.05-1.08). Without
+    // this, launch torque spins the driven wheels to absurd slip ratios
+    // where the Pacejka force collapses — combined with phantom front-wheel
+    // braking the car would sit still with the engine revving ("no control").
+    // Applies to both drive directions (reverse torque is negative).
+    for (const i of REAR_AXLE) {
+      const maxTq = this._getSurfaceMu(i) * this.wheelFz[i] * TIRE.RADIUS * 1.05;
+      this.wheelDriveTq[i] = Math.sign(this.wheelDriveTq[i]) * Math.min(Math.abs(this.wheelDriveTq[i]), maxTq);
+    }
+
     this.wheelDriveTq[W.FL] = 0;
     this.wheelDriveTq[W.FR] = 0;
   }
@@ -773,6 +784,26 @@ export class VehiclePhysics {
   // ------------------------------------------------------------------
 
   _integrateWheels(dt) {
+    // Free (undriven, unbraked) wheels are coupled toward the rolling
+    // speed of their contact patch (omega ~ vxT / R). Without this they
+    // decay to omega ~ 0 and the slip model fabricates a slip ratio of
+    // about -1 — a huge fake braking force per undriven wheel that pins
+    // the car at standstill on a launch.
+    const ROLL_COUPLING = 40; // 1/s — how fast free wheels converge
+    for (let i = 0; i < 4; i++) {
+      if (this.wheelDriveTq[i] !== 0 || this.wheelBrakeTq[i] !== 0) continue;
+      const g = WHEEL_GEOMETRY[i];
+      const isFront = g.axle === 'front';
+      const delta = isFront ? (g.rx < 0 ? this._deltaL : this._deltaR) : 0;
+      const wx = g.fx * (isFront ? CAR.aFront : -CAR.bRear);
+      const wy = g.rx * (CAR.trackWidth / 2);
+      const vx = this.u - this.yawRate * wy;
+      const vy = this.v + this.yawRate * wx;
+      const vxT = vx * Math.cos(delta) + vy * Math.sin(delta);
+      const target = vxT / TIRE.RADIUS;
+      this.wheelOmega[i] += (target - this.wheelOmega[i]) * Math.min(1, ROLL_COUPLING * dt);
+    }
+
     for (let i = 0; i < 4; i++) {
       const netTq = this.wheelDriveTq[i] + this.wheelBrakeTq[i] - this.wheelFx[i] * TIRE.RADIUS;
       const alpha = netTq / TIRE.INERTIA;

@@ -46,8 +46,8 @@ export class WorldMap {
   _resize() {
     const w = Math.min(window.innerWidth - 60, 1100);
     const h = Math.min(window.innerHeight - 140, 720);
-    this.canvas.width = w * 1;
-    this.canvas.height = h * 1;
+    this.canvas.width = w;
+    this.canvas.height = h;
     this.canvas.style.width = w + 'px';
     this.canvas.style.height = h + 'px';
     this._dirty = true;

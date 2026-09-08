@@ -80,6 +80,7 @@ export class Game {
 
     // ---- renderer --------------------------------------------------------
     const isPhone = this.isMobile && !this.isIPad;
+    this._dprCap = isPhone ? 1.4 : (this.isIPad ? 1.6 : 2.0);
     this.renderer = new THREE.WebGLRenderer({
       antialias: false,
       powerPreference: 'high-performance',
@@ -88,8 +89,7 @@ export class Game {
       depth: true,
       preserveDrawingBuffer: false
     });
-    const dprCap = isPhone ? 1.4 : (this.isIPad ? 1.6 : 2.0);
-    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, dprCap));
+    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, this._dprCap));
     this.renderer.setSize(window.innerWidth, window.innerHeight);
     this.renderer.shadowMap.enabled = true;
     this.renderer.shadowMap.type = THREE.PCFShadowMap;
@@ -194,9 +194,10 @@ export class Game {
       this.camera.aspect = w / h;
       this.camera.updateProjectionMatrix();
       const q = QUALITY[this.settings.quality] || QUALITY.medium;
-      this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, q.pixelRatio));
+      const dpr = Math.min(window.devicePixelRatio || 1, q.pixelRatio, this._dprCap || 2);
+      this.renderer.setPixelRatio(dpr);
       this.renderer.setSize(w, h);
-      this.postfx && this.postfx.setSize(w, h, Math.min(window.devicePixelRatio || 1, q.pixelRatio));
+      this.postfx && this.postfx.setSize(w, h, dpr);
     };
     window.addEventListener('resize', this._onResize);
     window.addEventListener('orientationchange', () => setTimeout(() => this._onResize(), 250));
@@ -206,7 +207,7 @@ export class Game {
       }
     });
 
-    window.__game = this;
+    window.__game = import.meta.env && import.meta.env.DEV ? this : undefined;
 
     this.state = 'loading';
     this._clock.start();
@@ -301,7 +302,7 @@ export class Game {
 
   _applyQuality(name) {
     const q = QUALITY[name] || QUALITY.medium;
-    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, q.pixelRatio));
+    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, q.pixelRatio, this._dprCap || 2));
     this.renderer.shadowMap.enabled = q.shadows;
     const sun = this.environment.sun;
     if (q.shadows) {
@@ -431,9 +432,6 @@ export class Game {
     // snap back onto the nearest road, facing along it
     const q = this.world.locate(this.phys.position.x, this.phys.position.z);
     if (q) {
-      const px = q.route && q.route.kind === 'col'
-        ? (q.route ? this.world.network.coordAt(q.route, this.phys.position.z) : 0)
-        : this.phys.position.x;
       const targetX = this.phys.position.x - q.rightX * q.lateral;
       const targetZ = this.phys.position.z - q.rightZ * q.lateral;
       const heading = Math.atan2(q.tx, q.tz);
@@ -541,7 +539,6 @@ export class Game {
     this.world.scenery.matLampGlow.color.setHex(
       this.environment.sunElevation < 0.12 ? 0xffd9a0 : 0x777168
     );
-    this.world.scenery.matBeacon.visible = true;
 
     // world streaming — budget grows when frames are slow (weak GPUs) so
     // the queue still drains, and stays small at high frame rates
