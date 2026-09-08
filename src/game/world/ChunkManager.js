@@ -705,8 +705,15 @@ export class ChunkManager {
     }
 
     // ---- trees ----
+    // Base open-world tree density, independent of the forest/mountain math:
+    // open grassland & savanna were getting ~0 trees because the old formula
+    // only credited trees to forest/mountain/beach biomes. Give every biome a
+    // healthy floor so open country reads as populated countryside, with dense
+    // forests still stacking on top.
+    const sav = samples.filter((b) => b === BIOME_ID.SAVANNA || b === BIOME_ID.GRASSLAND).length;
+    const openFloor = (1 - inCity) * (14 + 6 * (sav / 9));
     const treeCount = Math.round(
-      (forest / 9) * 60 + (mountain / 9) * 10 + (beach / 9) * 4 + (1 - inCity) * 6
+      (forest / 9) * 64 + (mountain / 9) * 12 + (beach / 9) * 5 + openFloor
     );
     for (let i = 0; i < treeCount; i++) {
       const p = tryPos();
@@ -725,20 +732,25 @@ export class ChunkManager {
         push('palm', scenery.palmGeo, scenery.matTree, p.x, y, p.z, 0.8 + rng() * 0.5, ry);
       } else if (biome === BIOME_ID.DESERT) {
         push('cactus', scenery.cactusGeo, scenery.matTree, p.x, y, p.z, 0.7 + rng() * 0.6, ry);
-      } else if ((biome === BIOME_ID.SAVANNA || biome === BIOME_ID.GRASSLAND) && rng() < 0.4) {
-        push('broad', scenery.broadleafGeo, scenery.matTree, p.x, y, p.z, s, ry);
+      } else if (biome === BIOME_ID.SAVANNA || biome === BIOME_ID.GRASSLAND) {
+        // open country: acacia-style broadleaf with scattered conifers
+        if (rng() < 0.72) {
+          push('broad', scenery.broadleafGeo, scenery.matTree, p.x, y, p.z, s * 1.1, ry);
+        } else if (rng() < 0.5) {
+          push('conifer', scenery.coniferGeo, scenery.matTree, p.x, y, p.z, s * 0.7, ry);
+        }
       }
     }
 
     // ---- bushes / rocks ----
-    const bushCount = 26;
+    const bushCount = 34;
     for (let i = 0; i < bushCount; i++) {
       const p = tryPos();
       const g = okForScatter(p.x, p.z);
       if (!g) continue;
       push('bush', scenery.bushGeo, scenery.matTree, p.x, g.y - 0.08, p.z, 0.5 + rng() * 1.1, rng() * Math.PI * 2);
     }
-    const rockCount = 9;
+    const rockCount = 14;
     for (let i = 0; i < rockCount; i++) {
       const p = tryPos();
       const g = okForScatter(p.x, p.z);
@@ -746,11 +758,23 @@ export class ChunkManager {
       push('rock', scenery.rockGeo, scenery.matTree, p.x, g.y - 0.1, p.z, 0.4 + rng() * 1.4, rng() * Math.PI * 2);
     }
 
+    // ---- full-coverage grass blades ----
+    // Every chunk gets a sparser grass-blade layer everywhere (not just near
+    // the player), so open land reads as actual countryside instead of bare
+    // tundra. Denser near-field blades then stack on top near the player.
+    const farGrassCount = Math.round(46 * (1 - inCity)) * (desert < 4 ? 1 : 0);
+    for (let i = 0; i < farGrassCount; i++) {
+      const p = tryPos();
+      const g = okForScatter(p.x, p.z);
+      if (!g) continue;
+      push('grass', scenery.grassGeo, scenery.matTree, p.x, g.y - 0.04, p.z, 0.6 + rng() * 1.1, rng() * Math.PI * 2);
+    }
+
     // ---- grass + flowers (near field only) ----
     const dcx = Math.abs(cx - this._lastCenter.cx);
     const dcz = Math.abs(cz - this._lastCenter.cz);
     if (Math.max(dcx, dcz) <= q.grassRadius) {
-      const grassCount = 130;
+      const grassCount = Math.round(170 * (1 - inCity * 0.6));
       for (let i = 0; i < grassCount; i++) {
         const p = tryPos();
         const g = okForScatter(p.x, p.z);

@@ -174,15 +174,15 @@ export class Terrain {
         break;
       }
       case BIOME_ID.SAVANNA: {
-        r = 0.45 + v * 0.10; g = 0.56 + v * 0.10; bl = 0.24 + v * 0.06;
+        r = 0.56 + v * 0.10; g = 0.66 + v * 0.10; bl = 0.32 + v * 0.06;
         break;
       }
       case BIOME_ID.GRASSLAND: {
-        r = 0.30 + v * 0.10; g = 0.48 + v * 0.12; bl = 0.16 + v * 0.06;
+        r = 0.44 + v * 0.10; g = 0.64 + v * 0.12; bl = 0.26 + v * 0.06;
         break;
       }
       case BIOME_ID.FOREST: {
-        r = 0.16 + v * 0.10; g = 0.30 + v * 0.12; bl = 0.12 + v * 0.06;
+        r = 0.22 + v * 0.10; g = 0.40 + v * 0.12; bl = 0.16 + v * 0.06;
         break;
       }
       case BIOME_ID.RAINFOREST: {
