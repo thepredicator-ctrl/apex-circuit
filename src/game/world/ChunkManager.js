@@ -876,6 +876,8 @@ function duplicateGeometry(src) {
     const i = src.index;
     g.setIndex(new i.constructor(new i.array.constructor(i.array), i.itemSize));
   }
-  g.drawRange.set(src.drawRange.start, src.drawRange.count);
+  // drawRange is a plain { start, count } object, not an API class
+  g.drawRange.start = src.drawRange.start;
+  g.drawRange.count = src.drawRange.count;
   return g;
 }
