@@ -1,26 +1,33 @@
 /**
- * DriftMap — seeded procedural drift park.
+ * DriftMap — seeded procedural drift park (v2).
  *
- * From one text seed it derives: a closed circuit (jittered ring of control
- * points smoothed by a centripetal Catmull-Rom spline), painted DRIFT ZONES
- * on the sharp corners (2x / 3x score multipliers by corner sharpness), a
- * central skidpad for donut practice (1.5x), tire walls, curbs, cones, tree
- * scatter and a start gantry.
+ * From one text seed it derives a closed circuit whose character comes from
+ * a RADIAL PROFILE applied to a ring of control points: seeded "notches"
+ * pull the path inward into hairpin complexes, "bulges" push it out into
+ * fast sweepers, and the jitter between them produces natural esses. The
+ * result reads as a designed track (straight → sweeper → hairpin → esses →
+ * back straight) instead of a random blob.
  *
- * Collision is analytic against the track ribbon (nearest centerline sample
- * + lateral clamp), so no physics meshes are ever needed — cheap on mobile.
- * Same seed in, identical map out on every device.
+ * Everything else is dressed for drifting: DRIFT ZONES painted on the sharp
+ * corners with ×2 / ×3 score labels, a big central skidpad (×1.5) with
+ * donut rings, chevron arrows on zone entries, light poles, a start gantry
+ * plus a mid-track banner arch, a small grandstand, palm/oak scatter and an
+ * OPEN low rail fence instead of solid walls (visibility = mobile comfort).
+ *
+ * Collision stays analytic against the track ribbon (nearest centerline
+ * sample + lateral clamp) — no physics meshes, cheap on mobile, identical
+ * map from the same seed on every device.
  */
 import * as THREE from 'three';
-import { makeRNG, range, chance } from '../core/RNG.js';
+import { makeRNG, range } from '../core/RNG.js';
 
-const HALF_W = 7.5;          // road half width (15 m — generous for drift)
-const WALL_OFF = HALF_W + 1.5;
-const COLLIDE_OFF = HALF_W + 1.35;
-const N_POINTS = 12;         // control points around the ring
-const N_SAMPLES = 640;       // centerline samples (~2 m apart)
-const R0 = 205;              // base ring radius
-const SKIDPAD_R = 48;
+const HALF_W = 8.5;          // road half width (17 m — generous for drift)
+const FENCE_OFF = HALF_W + 1.6;
+const COLLIDE_OFF = HALF_W + 1.45;
+const N_POINTS = 16;         // control points around the ring
+const N_SAMPLES = 680;       // centerline samples (~2.2 m apart)
+const R0 = 215;              // base ring radius
+const SKIDPAD_R = 54;
 
 export class DriftMap {
   constructor(seed) {
@@ -34,12 +41,37 @@ export class DriftMap {
   _build() {
     const rng = makeRNG(this.seed);
 
-    // ---- control points: jittered ring ---------------------------------
+    // ---- radial profile: notches (hairpins) + bulges (sweepers) ---------
+    const gauss = (d, s) => Math.exp(-(d * d) / (2 * s * s));
+    const notches = [];
+    const nCount = 2 + Math.floor(range(rng, 0, 1.6));   // 2..3 notches
+    let ang = range(rng, 0.5, 1.0);
+    for (let i = 0; i < nCount; i++) {
+      notches.push({ ang, width: range(rng, 0.16, 0.23), depth: range(rng, 0.3, 0.4) });
+      ang += (Math.PI * 2) / nCount + range(rng, -0.5, 0.5);
+    }
+    const bulges = [];
+    for (let i = 0; i < notches.length; i++) {
+      const mid = notches[i].ang + ((notches[(i + 1) % notches.length].ang - notches[i].ang
+        + (i + 1 < notches.length ? 0 : Math.PI * 2)) % (Math.PI * 2)) / 2;
+      bulges.push({ ang: mid % (Math.PI * 2), width: range(rng, 0.3, 0.45), depth: range(rng, 0.16, 0.26) });
+    }
+
+    // ---- control points --------------------------------------------------
     const pts = [];
     for (let i = 0; i < N_POINTS; i++) {
-      const ang = (i / N_POINTS) * Math.PI * 2 + range(rng, -0.16, 0.16);
-      const r = R0 * (1 + range(rng, -0.34, 0.34));
-      pts.push(new THREE.Vector3(Math.sin(ang) * r, 0, Math.cos(ang) * r));
+      const a = (i / N_POINTS) * Math.PI * 2;
+      let r = R0;
+      for (const n of notches) {
+        let d = Math.abs(a - n.ang); d = Math.min(d, Math.PI * 2 - d);
+        r *= 1 - n.depth * gauss(d, n.width);
+      }
+      for (const b of bulges) {
+        let d = Math.abs(a - b.ang); d = Math.min(d, Math.PI * 2 - d);
+        r *= 1 + b.depth * gauss(d, b.width);
+      }
+      r *= 1 + range(rng, -0.05, 0.05);
+      pts.push(new THREE.Vector3(Math.sin(a) * r, 0, Math.cos(a) * r));
     }
     const curve = new THREE.CatmullRomCurve3(pts, true, 'centripetal');
     const raw = curve.getSpacedPoints(N_SAMPLES); // even arc spacing
@@ -54,11 +86,10 @@ export class DriftMap {
       let tx = pn.x - pp.x, tz = pn.z - pp.z;
       const tl = Math.hypot(tx, tz) || 1;
       tx /= tl; tz /= tl;
-      const seg = Math.hypot(pn.x - p.x, pn.z - p.z);
-      dist += seg;
+      dist += Math.hypot(pn.x - p.x, pn.z - p.z);
       S.push({
         x: p.x, z: p.z, tx, tz,
-        nx: tz, nz: -tx,          // left of travel (facing +Z, left = +X-ish)
+        nx: tz, nz: -tx,          // left of travel
         dist, curv: 0, zone: 0,   // zone: 0 none | 2 | 3
       });
     }
@@ -71,10 +102,8 @@ export class DriftMap {
       let dh = hb - ha;
       while (dh > Math.PI) dh -= Math.PI * 2;
       while (dh < -Math.PI) dh += Math.PI * 2;
-      const arc = b.dist - a.dist;
-      S[i].curv = dh / Math.max(arc, 0.5);
+      S[i].curv = dh / Math.max(b.dist - a.dist, 0.5);
     }
-    // smooth curvature (box filter) to avoid spline noise
     const sm = S.map((s, i) => {
       let acc = 0;
       for (let k = -5; k <= 5; k++) acc += S[(i + k + N_SAMPLES) % N_SAMPLES].curv;
@@ -82,17 +111,23 @@ export class DriftMap {
     });
     S.forEach((s, i) => { s.curv = sm[i]; });
 
-    // ---- drift zones on sharp corners -----------------------------------
-    let i = 0;
-    while (i < N_SAMPLES) {
-      const k = Math.abs(S[i].curv);
-      if (k > 1 / 70) {
-        const mult = k > 1 / 40 ? 3 : 2;
-        let j = i;
-        while (j < N_SAMPLES && Math.abs(S[j].curv) > 1 / 70) j++;
-        if (j - i >= 8) for (let q = i; q < j; q++) S[q].zone = mult;
-        i = j;
-      } else i++;
+    // ---- drift zones on sharp corners (auto-lower threshold if sparse) ---
+    let thr2 = 1 / 75, thr3 = 1 / 44;
+    for (let attempt = 0; attempt < 3; attempt++) {
+      S.forEach((s) => { s.zone = 0; });
+      let i = 0, zones = 0;
+      while (i < N_SAMPLES) {
+        const k = Math.abs(S[i].curv);
+        if (k > thr2) {
+          const mult = k > thr3 ? 3 : 2;
+          let j = i;
+          while (j < N_SAMPLES && Math.abs(S[j].curv) > thr2) j++;
+          if (j - i >= 8) { for (let q = i; q < j; q++) S[q].zone = mult; zones++; }
+          i = j;
+        } else i++;
+      }
+      if (zones >= 4) break;
+      thr2 /= 1.18; thr3 /= 1.18;
     }
 
     // ---- skidpad center: ring centroid ----------------------------------
@@ -101,16 +136,19 @@ export class DriftMap {
     this.skidpad = { x: cx / N_SAMPLES, z: cz / N_SAMPLES, r: SKIDPAD_R, mult: 1.5 };
 
     this.trackLength = S[S.length - 1].dist;
-    this.spawnIdx = 8; // slightly past the gantry
+    this.spawnIdx = 8;
     this._trackIdx = 0;
 
     // ---- meshes ----------------------------------------------------------
     this._buildRoad();
-    this._buildCurbsAndWalls();
+    this._buildCurbsAndFence();
     this._buildZones();
     this._buildSkidpad();
     this._buildProps(rng);
-    this._buildGantry();
+    this._buildGantry(0, 'APEX DRIFT');
+    const far = S.reduce((best, s, i) =>
+      Math.hypot(s.x - S[0].x, s.z - S[0].z) > Math.hypot(S[best].x - S[0].x, S[best].z - S[0].z) ? i : best, 0);
+    this._buildGantry(far, 'KEEP SLIDING');
   }
 
   // ================================================================ meshes
@@ -123,15 +161,17 @@ export class DriftMap {
     const idx = [];
     for (let i = 0; i <= n; i++) {
       const s = S[i % n];
-      const v = s.dist / 12;
+      const v = s.dist / 14;
       const l = i * 2, r = i * 2 + 1;
-      pos[l * 3] = s.x + s.nx * HALF_W; pos[l * 3 + 1] = 0.02; pos[l * 3 + 2] = s.z + s.nz * HALF_W;
-      pos[r * 3] = s.x - s.nx * HALF_W; pos[r * 3 + 1] = 0.02; pos[r * 3 + 2] = s.z - s.nz * HALF_W;
+      pos[l * 3] = s.x + s.nx * HALF_W; pos[l * 3 + 1] = 0.10; pos[l * 3 + 2] = s.z + s.nz * HALF_W;
+      pos[r * 3] = s.x - s.nx * HALF_W; pos[r * 3 + 1] = 0.10; pos[r * 3 + 2] = s.z - s.nz * HALF_W;
       uv[l * 2] = 0; uv[l * 2 + 1] = v;
       uv[r * 2] = 1; uv[r * 2 + 1] = v;
       if (i < n) {
         const a = l, b = r, c = l + 2, d = r + 2;
-        idx.push(a, c, b, b, c, d);
+        // winding chosen so face normals point UP (+Y) — the previous order
+        // faced down and FrontSide culling made the road invisible
+        idx.push(a, b, c, b, d, c);
       }
     }
     const g = new THREE.BufferGeometry();
@@ -139,13 +179,12 @@ export class DriftMap {
     g.setAttribute('uv', new THREE.BufferAttribute(uv, 2));
     g.setIndex(idx);
     g.computeVertexNormals();
-    const tex = makeAsphaltTexture();
-    const mesh = new THREE.Mesh(g, new THREE.MeshLambertMaterial({ map: tex }));
+    const mesh = new THREE.Mesh(g, new THREE.MeshLambertMaterial({ map: makeAsphaltTexture() }));
     mesh.receiveShadow = true;
     this.group.add(mesh);
   }
 
-  _buildCurbsAndWalls() {
+  _buildCurbsAndFence() {
     const S = this.samples;
     const n = N_SAMPLES;
 
@@ -158,10 +197,10 @@ export class DriftMap {
       for (const side of [1, -1]) {
         const v0 = s.dist / 4, v1 = s2.dist / 4;
         cPos.push(
-          s.x + s.nx * (HALF_W + 1.2) * side, 0.05, s.z + s.nz * (HALF_W + 1.2) * side,
-          s.x + s.nx * HALF_W * side, 0.05, s.z + s.nz * HALF_W * side,
-          s2.x + s2.nx * (HALF_W + 1.2) * side, 0.05, s2.z + s2.nz * (HALF_W + 1.2) * side,
-          s2.x + s2.nx * HALF_W * side, 0.05, s2.z + s2.nz * HALF_W * side,
+          s.x + s.nx * (HALF_W + 1.1) * side, 0.14, s.z + s.nz * (HALF_W + 1.1) * side,
+          s.x + s.nx * HALF_W * side, 0.12, s.z + s.nz * HALF_W * side,
+          s2.x + s2.nx * (HALF_W + 1.1) * side, 0.14, s2.z + s2.nz * (HALF_W + 1.1) * side,
+          s2.x + s2.nx * HALF_W * side, 0.12, s2.z + s2.nz * HALF_W * side,
         );
         cUV.push(0, v0, 1, v0, 0, v1, 1, v1);
         cIdx.push(vc, vc + 2, vc + 1, vc + 1, vc + 2, vc + 3);
@@ -174,91 +213,168 @@ export class DriftMap {
       g.setAttribute('uv', new THREE.BufferAttribute(new Float32Array(cUV), 2));
       g.setIndex(cIdx);
       g.computeVertexNormals();
-      this.group.add(new THREE.Mesh(g, new THREE.MeshLambertMaterial({ map: makeCurbTexture() })));
+      this.group.add(new THREE.Mesh(g, new THREE.MeshLambertMaterial({
+        map: makeCurbTexture(), side: THREE.DoubleSide, // mirrored sides flip winding
+      })));
     }
 
-    // walls: continuous low barriers both sides, vertex-colored stripes
-    const wPos = [], wCol = [], wIdx = [];
-    let vw = 0;
-    const cA = new THREE.Color(0x2c2f36), cB = new THREE.Color(0xb33028);
+    // OPEN fence: thin white posts every ~13 m + one low rail — the park
+    // stays visible (mobile comfort: no tall solid walls blocking view)
+    const postGeo = new THREE.BoxGeometry(0.14, 1.0, 0.14);
+    const postMat = new THREE.MeshLambertMaterial({ color: 0xe8e6df });
+    const postCount = Math.floor(n / 6);
+    const posts = new THREE.InstancedMesh(postGeo, postMat, postCount * 2);
+    const m4 = new THREE.Matrix4();
+    let pi = 0;
+    for (let i = 0; i < n; i += 6) {
+      const s = S[i];
+      for (const side of [1, -1]) {
+        m4.makeTranslation(s.x + s.nx * FENCE_OFF * side, 0.5, s.z + s.nz * FENCE_OFF * side);
+        posts.setMatrixAt(pi++, m4);
+      }
+    }
+    posts.count = pi;
+    posts.instanceMatrix.needsUpdate = true;
+    this.group.add(posts);
+
+    const rPos = [], rIdx = [];
+    let vr = 0;
     for (let i = 0; i < n; i++) {
       const s = S[i], s2 = S[(i + 1) % n];
       for (const side of [1, -1]) {
-        const stripe = Math.floor(s.dist / 8) % 2 === 0 ? cA : cB;
-        wPos.push(
-          s.x + s.nx * WALL_OFF * side, 0, s.z + s.nz * WALL_OFF * side,
-          s.x + s.nx * WALL_OFF * side, 0.95, s.z + s.nz * WALL_OFF * side,
-          s2.x + s2.nx * WALL_OFF * side, 0, s2.z + s2.nz * WALL_OFF * side,
-          s2.x + s2.nx * WALL_OFF * side, 0.95, s2.z + s2.nz * WALL_OFF * side,
+        rPos.push(
+          s.x + s.nx * FENCE_OFF * side, 0.78, s.z + s.nz * FENCE_OFF * side,
+          s.x + s.nx * FENCE_OFF * side, 0.62, s.z + s.nz * FENCE_OFF * side,
+          s2.x + s2.nx * FENCE_OFF * side, 0.78, s2.z + s2.nz * FENCE_OFF * side,
+          s2.x + s2.nx * FENCE_OFF * side, 0.62, s2.z + s2.nz * FENCE_OFF * side,
         );
-        for (let k = 0; k < 4; k++) wCol.push(stripe.r, stripe.g, stripe.b);
-        wIdx.push(vw, vw + 2, vw + 1, vw + 1, vw + 2, vw + 3);
-        vw += 4;
+        rIdx.push(vr, vr + 2, vr + 1, vr + 1, vr + 2, vr + 3);
+        vr += 4;
       }
     }
-    const wg = new THREE.BufferGeometry();
-    wg.setAttribute('position', new THREE.BufferAttribute(new Float32Array(wPos), 3));
-    wg.setAttribute('color', new THREE.BufferAttribute(new Float32Array(wCol), 3));
-    wg.setIndex(wIdx);
-    wg.computeVertexNormals();
-    const walls = new THREE.Mesh(wg, new THREE.MeshLambertMaterial({ vertexColors: true, side: THREE.DoubleSide }));
-    walls.castShadow = false;
-    this.group.add(walls);
+    const rg = new THREE.BufferGeometry();
+    rg.setAttribute('position', new THREE.BufferAttribute(new Float32Array(rPos), 3));
+    rg.setIndex(rIdx);
+    rg.computeVertexNormals();
+    this.group.add(new THREE.Mesh(rg, new THREE.MeshLambertMaterial({
+      color: 0xf2f0e8, side: THREE.DoubleSide,
+    })));
   }
 
   _buildZones() {
-    // translucent overlays on the road surface marking drift zones
     const S = this.samples;
     const n = N_SAMPLES;
     for (const mult of [2, 3]) {
-      const pos = [], idxArr = [];
+      const pos = [], idxArr = [], uvArr = [];
       let v = 0;
       for (let i = 0; i < n; i++) {
         if (S[i].zone !== mult) continue;
         const s = S[i], s2 = S[(i + 1) % n];
         const inset = 0.7;
+        const v0 = s.dist / 9, v1 = s2.dist / 9;
         pos.push(
-          s.x + s.nx * (HALF_W - inset), 0.06, s.z + s.nz * (HALF_W - inset),
-          s.x - s.nx * (HALF_W - inset), 0.06, s.z - s.nz * (HALF_W - inset),
-          s2.x + s2.nx * (HALF_W - inset), 0.06, s2.z + s2.nz * (HALF_W - inset),
-          s2.x - s2.nx * (HALF_W - inset), 0.06, s2.z - s2.nz * (HALF_W - inset),
+          s.x + s.nx * (HALF_W - inset), 0.16, s.z + s.nz * (HALF_W - inset),
+          s.x - s.nx * (HALF_W - inset), 0.16, s.z - s.nz * (HALF_W - inset),
+          s2.x + s2.nx * (HALF_W - inset), 0.16, s2.z + s2.nz * (HALF_W - inset),
+          s2.x - s2.nx * (HALF_W - inset), 0.16, s2.z - s2.nz * (HALF_W - inset),
         );
-        idxArr.push(v, v + 2, v + 1, v + 1, v + 2, v + 3);
+        uvArr.push(0, v0, 1, v0, 0, v1, 1, v1);
+        // normals up (same fix as the road ribbon)
+        idxArr.push(v, v + 1, v + 2, v + 1, v + 3, v + 2);
         v += 4;
       }
       if (!v) continue;
       const g = new THREE.BufferGeometry();
       g.setAttribute('position', new THREE.BufferAttribute(new Float32Array(pos), 3));
+      g.setAttribute('uv', new THREE.BufferAttribute(new Float32Array(uvArr), 2));
       g.setIndex(idxArr);
       g.computeVertexNormals();
       const color = mult === 3 ? 0xff3b30 : 0xff9d14;
       const mesh = new THREE.Mesh(g, new THREE.MeshBasicMaterial({
-        color, transparent: true, opacity: 0.16, depthWrite: false,
+        color, transparent: true, opacity: 0.14, depthWrite: false,
       }));
       this.group.add(mesh);
+
+      // painted ×2 / ×3 labels: one at each contiguous zone run's midpoint,
+      // plus a second one on long runs
+      const labelTex = makeZoneLabelTexture(mult);
+      const runs = [];
+      let i = 0;
+      while (i < n) {
+        if (S[i].zone !== mult) { i++; continue; }
+        let j = i;
+        while (j < n && S[j].zone === mult) j++;
+        runs.push([i, j]);
+        i = j;
+      }
+      for (const [a, b] of runs) {
+        const spots = b - a > 56 ? [Math.round((a + b) / 2), (a + 26) % n] : [Math.round((a + b) / 2)];
+        for (const si of spots) {
+          const s = S[si];
+          const lbl = new THREE.Mesh(
+            new THREE.PlaneGeometry(6.5, 6.5),
+            new THREE.MeshBasicMaterial({ map: labelTex, transparent: true, depthWrite: false, opacity: 0.85 }),
+          );
+          lbl.rotation.x = -Math.PI / 2;
+          lbl.rotation.z = -Math.atan2(s.tx, s.tz);
+          lbl.position.set(s.x, 0.18, s.z);
+          this.group.add(lbl);
+        }
+      }
+    }
+
+    // chevron arrows on the approach into each zone (point the way in)
+    const chevTex = makeChevronTexture();
+    for (let i = 0; i < n; i++) {
+      const s = S[i], nxt = S[(i + 14) % n];
+      if (!nxt.zone || s.zone) continue;
+      if ((i % 12) !== 0) continue;
+      const arr = new THREE.Mesh(
+        new THREE.PlaneGeometry(3.4, 5),
+        new THREE.MeshBasicMaterial({ map: chevTex, transparent: true, depthWrite: false, opacity: 0.7 }),
+      );
+      arr.rotation.x = -Math.PI / 2;
+      arr.rotation.z = -Math.atan2(s.tx, s.tz);
+      arr.position.set(s.x, 0.18, s.z);
+      this.group.add(arr);
     }
   }
 
   _buildSkidpad() {
     const sp = this.skidpad;
-    const tex = makeSkidpadTexture();
-    const circle = new THREE.Mesh(
+    const pad = new THREE.Mesh(
       new THREE.CircleGeometry(sp.r, 56),
-      new THREE.MeshLambertMaterial({ map: tex }),
+      new THREE.MeshLambertMaterial({ map: makeSkidpadTexture() }),
     );
-    circle.rotation.x = -Math.PI / 2;
-    circle.position.set(sp.x, 0.015, sp.z);
-    circle.receiveShadow = true;
-    this.group.add(circle);
+    pad.rotation.x = -Math.PI / 2;
+    pad.position.set(sp.x, 0.12, sp.z);
+    pad.receiveShadow = true;
+    this.group.add(pad);
 
-    // painted outer ring + center donut marker
+    // painted outer ring + donut guide rings + ×1.5 badge
     const ring = new THREE.Mesh(
-      new THREE.RingGeometry(sp.r - 2.2, sp.r - 0.9, 56),
-      new THREE.MeshBasicMaterial({ color: 0xffd75e, transparent: true, opacity: 0.5, depthWrite: false }),
+      new THREE.RingGeometry(sp.r - 2.4, sp.r - 0.9, 56),
+      new THREE.MeshBasicMaterial({ color: 0xffd75e, transparent: true, opacity: 0.55, depthWrite: false }),
     );
     ring.rotation.x = -Math.PI / 2;
-    ring.position.set(sp.x, 0.05, sp.z);
+    ring.position.set(sp.x, 0.16, sp.z);
     this.group.add(ring);
+
+    const guide = new THREE.Mesh(
+      new THREE.RingGeometry(sp.r * 0.46 - 0.4, sp.r * 0.46, 48),
+      new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.28, depthWrite: false }),
+    );
+    guide.rotation.x = -Math.PI / 2;
+    guide.position.set(sp.x, 0.16, sp.z);
+    this.group.add(guide);
+
+    const badge = new THREE.Mesh(
+      new THREE.PlaneGeometry(9, 9),
+      new THREE.MeshBasicMaterial({ map: makeZoneLabelTexture('×1.5'), transparent: true, depthWrite: false, opacity: 0.8 }),
+    );
+    badge.rotation.x = -Math.PI / 2;
+    badge.position.set(sp.x, 0.18, sp.z);
+    this.group.add(badge);
   }
 
   _buildProps(rng) {
@@ -276,7 +392,7 @@ export class DriftMap {
       if (!S[i].zone) continue;
       const s = S[i];
       const side = s.curv > 0 ? -1 : 1; // outside of the corner
-      coneSpots.push([s.x + s.nx * (HALF_W + 2.6) * side, s.z + s.nz * (HALF_W + 2.6) * side]);
+      coneSpots.push([s.x + s.nx * (HALF_W + 2.4) * side, s.z + s.nz * (HALF_W + 2.4) * side]);
     }
     const cones = new THREE.InstancedMesh(
       new THREE.ConeGeometry(0.22, 0.62, 8),
@@ -291,13 +407,13 @@ export class DriftMap {
 
     // --- tire stacks at zone entries (inside edge)
     const stackSpots = [];
-    for (let i = 0; i < n; i += 26) {
+    for (let i = 0; i < n; i += 22) {
       if (!S[i].zone) continue;
       const s = S[i];
       const side = s.curv > 0 ? 1 : -1; // inside of the corner
       for (let k = -1; k <= 1; k++) {
         const s2 = S[(i + k * 3 + n) % n];
-        stackSpots.push([s2.x + s2.nx * (WALL_OFF + 1.4) * side, s2.z + s2.nz * (WALL_OFF + 1.4) * side, range(rng, 0, Math.PI * 2)]);
+        stackSpots.push([s2.x + s2.nx * (FENCE_OFF + 1.2) * side, s2.z + s2.nz * (FENCE_OFF + 1.2) * side, range(rng, 0, Math.PI * 2)]);
       }
     }
     const stacks = new THREE.InstancedMesh(
@@ -313,44 +429,125 @@ export class DriftMap {
     q.identity();
     this.group.add(stacks);
 
-    // --- trees scattered away from the track
-    const treeSpots = [];
+    // --- light poles along the track, alternating sides
+    const poleSpots = [];
+    for (let i = 0; i < n; i += 44) {
+      const s = S[i];
+      const side = (i / 44) % 2 === 0 ? 1 : -1;
+      poleSpots.push([s.x + s.nx * (FENCE_OFF + 2.2) * side, s.z + s.nz * (FENCE_OFF + 2.2) * side, Math.atan2(s.tx, s.tz)]);
+    }
+    const poleGeo = new THREE.CylinderGeometry(0.09, 0.13, 6.4, 6);
+    const poleMat = new THREE.MeshLambertMaterial({ color: 0x4a4f58 });
+    const poles = new THREE.InstancedMesh(poleGeo, poleMat, poleSpots.length);
+    const headGeo = new THREE.BoxGeometry(1.5, 0.22, 0.5);
+    const headMat = new THREE.MeshLambertMaterial({ color: 0xd8dde5, emissive: 0x8a7a40, emissiveIntensity: 0.55 });
+    const heads = new THREE.InstancedMesh(headGeo, headMat, poleSpots.length);
+    poleSpots.forEach(([x, z, rot], k) => {
+      m4.compose(new THREE.Vector3(x, 3.2, z), q.identity(), scl.set(1, 1, 1));
+      poles.setMatrixAt(k, m4);
+      q.setFromAxisAngle(up, rot);
+      m4.compose(new THREE.Vector3(x - Math.sin(rot) * 0.8, 6.3, z - Math.cos(rot) * 0.8), q, scl.set(1, 1, 1));
+      heads.setMatrixAt(k, m4);
+    });
+    poles.instanceMatrix.needsUpdate = true;
+    heads.instanceMatrix.needsUpdate = true;
+    this.group.add(poles, heads);
+
+    // --- grandstand near the start straight (outside the fence)
+    const s0 = S[4];
+    const gSide = 1;
+    const gx = s0.x + s0.nx * (FENCE_OFF + 9) * gSide;
+    const gz = s0.z + s0.nz * (FENCE_OFF + 9) * gSide;
+    const rot = Math.atan2(s0.tx, s0.tz);
+    const stand = new THREE.Group();
+    const concrete = new THREE.MeshLambertMaterial({ color: 0x9aa0a8 });
+    const seatColors = [0xc74a3c, 0x3c74c7, 0xd8b13c];
+    for (let tier = 0; tier < 3; tier++) {
+      const step = new THREE.Mesh(new THREE.BoxGeometry(26, 0.8 + tier * 0.9, 2.2), concrete);
+      step.position.set(0, (0.8 + tier * 0.9) / 2, tier * 2.1);
+      step.castShadow = true;
+      stand.add(step);
+      const crowd = new THREE.InstancedMesh(
+        new THREE.SphereGeometry(0.26, 6, 5),
+        new THREE.MeshLambertMaterial({ color: seatColors[tier % 3] }), 34);
+      for (let c = 0; c < 34; c++) {
+        m4.compose(new THREE.Vector3(-12 + c * 0.72 + range(rng, -0.2, 0.2), 0.8 + tier * 0.9 + 0.5, tier * 2.1 + range(rng, -0.5, 0.5)),
+          q.identity(), scl.set(1, 1, 1));
+        crowd.setMatrixAt(c, m4);
+      }
+      crowd.instanceMatrix.needsUpdate = true;
+      stand.add(crowd);
+    }
+    const roof = new THREE.Mesh(new THREE.BoxGeometry(27, 0.25, 8), new THREE.MeshLambertMaterial({ color: 0x2c3038 }));
+    roof.position.set(0, 4.6, 2.0);
+    stand.add(roof);
+    for (const px of [-12.5, 12.5]) {
+      const leg = new THREE.Mesh(new THREE.BoxGeometry(0.3, 4.6, 0.3), concrete);
+      leg.position.set(px, 2.3, 5.4);
+      stand.add(leg);
+    }
+    stand.position.set(gx, 0, gz);
+    stand.rotation.y = rot + (gSide > 0 ? Math.PI : 0);
+    this.group.add(stand);
+
+    // --- trees: palms near the fence, oaks scattered wide
+    const palmSpots = [], oakSpots = [];
     let guard = 0;
-    while (treeSpots.length < 110 && guard++ < 900) {
-      const x = range(rng, -420, 420), z = range(rng, -420, 420);
+    while (palmSpots.length + oakSpots.length < 130 && guard++ < 1200) {
+      const x = range(rng, -430, 430), z = range(rng, -430, 430);
       let dMin = Infinity;
       for (let i = 0; i < n; i += 4) {
         const d = Math.hypot(S[i].x - x, S[i].z - z);
         if (d < dMin) dMin = d;
       }
       const dp = Math.hypot(sp.x - x, sp.z - z);
-      if (dMin > 27 && dp > sp.r + 9) treeSpots.push([x, z, range(rng, 0.7, 1.5), range(rng, 0, Math.PI * 2)]);
+      if (dMin <= 24 || dp <= sp.r + 8) continue;
+      const spot = [x, z, range(rng, 0.75, 1.4), range(rng, 0, Math.PI * 2)];
+      if (dMin < 44 && palmSpots.length < 46) palmSpots.push(spot);
+      else oakSpots.push(spot);
     }
-    const trunks = new THREE.InstancedMesh(
+
+    const palmTrunks = new THREE.InstancedMesh(
+      new THREE.CylinderGeometry(0.14, 0.24, 4.4, 6),
+      new THREE.MeshLambertMaterial({ color: 0x8a6a45 }), Math.max(palmSpots.length, 1));
+    const palmCrowns = new THREE.InstancedMesh(
+      new THREE.ConeGeometry(1.7, 1.1, 7),
+      new THREE.MeshLambertMaterial({ color: 0x3f9a4d }), Math.max(palmSpots.length, 1));
+    palmSpots.forEach(([x, z, s, rot2], k) => {
+      m4.compose(new THREE.Vector3(x, 2.2 * s, z), q.setFromAxisAngle(up, rot2), scl.set(s, s, s));
+      palmTrunks.setMatrixAt(k, m4);
+      m4.compose(new THREE.Vector3(x, 4.5 * s, z), q, scl.set(s, s * 0.6, s));
+      palmCrowns.setMatrixAt(k, m4);
+    });
+    palmTrunks.instanceMatrix.needsUpdate = true;
+    palmCrowns.instanceMatrix.needsUpdate = true;
+    this.group.add(palmTrunks, palmCrowns);
+
+    const oakTrunks = new THREE.InstancedMesh(
       new THREE.CylinderGeometry(0.24, 0.34, 2.8, 6),
-      new THREE.MeshLambertMaterial({ color: 0x6b4a32 }), treeSpots.length);
+      new THREE.MeshLambertMaterial({ color: 0x6b4a32 }), Math.max(oakSpots.length, 1));
     const crowns = new THREE.InstancedMesh(
       new THREE.IcosahedronGeometry(1.9, 0),
-      new THREE.MeshLambertMaterial({ color: 0xffffff }), treeSpots.length);
+      new THREE.MeshLambertMaterial({ color: 0xffffff }), Math.max(oakSpots.length, 1));
     const crownColor = new THREE.Color();
-    treeSpots.forEach(([x, z, s, rot], k) => {
-      q.setFromAxisAngle(up, rot);
-      m4.compose(new THREE.Vector3(x, 1.4 * s, z), q, scl.set(s, s, s));
-      trunks.setMatrixAt(k, m4);
+    oakSpots.forEach(([x, z, s, rot2], k) => {
+      m4.compose(new THREE.Vector3(x, 1.4 * s, z), q.setFromAxisAngle(up, rot2), scl.set(s, s, s));
+      oakTrunks.setMatrixAt(k, m4);
       m4.compose(new THREE.Vector3(x, (2.8 + 1.2) * s, z), q, scl.set(s, s * range(rng, 0.85, 1.25), s));
       crowns.setMatrixAt(k, m4);
-      crownColor.setHSL(range(rng, 0.24, 0.33), range(rng, 0.42, 0.6), range(rng, 0.3, 0.42));
+      crownColor.setHSL(range(rng, 0.26, 0.36), range(rng, 0.38, 0.58), range(rng, 0.3, 0.44));
       crowns.setColorAt(k, crownColor);
     });
-    trunks.instanceMatrix.needsUpdate = true;
+    oakTrunks.instanceMatrix.needsUpdate = true;
     crowns.instanceMatrix.needsUpdate = true;
     if (crowns.instanceColor) crowns.instanceColor.needsUpdate = true;
     crowns.castShadow = true;
-    this.group.add(trunks, crowns);
+    this.group.add(oakTrunks, crowns);
   }
 
-  _buildGantry() {
-    const s = this.samples[0];
+  _buildGantry(idx, text) {
+    const S = this.samples;
+    const s = S[idx];
     const g = new THREE.Group();
     const postMat = new THREE.MeshLambertMaterial({ color: 0x30343c });
     const postGeo = new THREE.BoxGeometry(0.6, 5.4, 0.6);
@@ -360,7 +557,7 @@ export class DriftMap {
       post.castShadow = true;
       g.add(post);
     }
-    const bannerTex = makeBannerTexture();
+    const bannerTex = makeBannerTexture(text);
     const banner = new THREE.Mesh(
       new THREE.BoxGeometry(HALF_W * 2 + 4.4, 1.15, 0.25),
       new THREE.MeshLambertMaterial({ map: bannerTex }),
@@ -371,17 +568,16 @@ export class DriftMap {
     g.rotation.y = Math.atan2(s.tx, s.tz);
     this.group.add(g);
 
-    // checkered start line
-    const lineGeo = new THREE.PlaneGeometry(HALF_W * 2, 1.6);
-    lineGeo.rotateX(-Math.PI / 2);
-    const line = new THREE.Mesh(
-      lineGeo,
-      new THREE.MeshBasicMaterial({ map: makeCheckerTexture() }),
-    );
-    const s2 = this.samples[2];
-    line.position.set(s2.x, 0.045, s2.z);
-    line.rotation.y = Math.atan2(s2.tx, s2.tz);
-    this.group.add(line);
+    if (text === 'APEX DRIFT') {
+      // checkered start line under the main gantry
+      const lineGeo = new THREE.PlaneGeometry(HALF_W * 2, 1.6);
+      lineGeo.rotateX(-Math.PI / 2);
+      const line = new THREE.Mesh(lineGeo, new THREE.MeshBasicMaterial({ map: makeCheckerTexture() }));
+      const s2 = S[(idx + 2) % N_SAMPLES];
+      line.position.set(s2.x, 0.12, s2.z);
+      line.rotation.y = Math.atan2(s2.tx, s2.tz);
+      this.group.add(line);
+    }
   }
 
   // ============================================================== queries
@@ -407,14 +603,8 @@ export class DriftMap {
     return best;
   }
 
-  /** Lateral offset from the centerline (+ = left of travel). */
-  lateralOffset(x, z, idx) {
-    const s = this.samples[idx];
-    return (x - s.x) * s.nx + (z - s.z) * s.nz;
-  }
-
   /**
-   * Push the car back inside the tire walls. Returns impact speed (m/s) or 0.
+   * Push the car back inside the fence. Returns impact speed (m/s) or 0.
    */
   resolveCollision(phys, hintIdx) {
     const idx = this.nearestIdx(phys.x, phys.z, hintIdx);
@@ -426,7 +616,7 @@ export class DriftMap {
     const corr = (Math.abs(lat) - COLLIDE_OFF) * sgn;
     phys.x -= s.nx * corr;
     phys.z -= s.nz * corr;
-    // reflect the into-wall velocity component (restitution 0.45)
+    // reflect the into-fence velocity component (restitution 0.45)
     const vn = phys.vxW * s.nx + phys.vzW * s.nz;
     if (vn * sgn > 0) {
       phys.vxW -= s.nx * vn * 1.45;
@@ -476,7 +666,6 @@ function makeAsphaltTexture() {
   return canvasTex(256, (ctx, s) => {
     ctx.fillStyle = '#3a3d43';
     ctx.fillRect(0, 0, s, s);
-    // speckle
     for (let i = 0; i < 1500; i++) {
       const g = 40 + Math.random() * 46;
       ctx.fillStyle = `rgba(${g},${g},${g + 6},${0.12 + Math.random() * 0.2})`;
@@ -533,7 +722,7 @@ function makeCheckerTexture() {
   });
 }
 
-function makeBannerTexture() {
+function makeBannerTexture(text) {
   return canvasTex(512, (ctx, s) => {
     ctx.fillStyle = '#14171d';
     ctx.fillRect(0, 0, s, s);
@@ -541,9 +730,43 @@ function makeBannerTexture() {
     ctx.fillRect(0, 0, s, 14);
     ctx.fillRect(0, s - 14, s, 14);
     ctx.fillStyle = '#f2f4f8';
-    ctx.font = 'bold 108px system-ui, sans-serif';
+    ctx.font = 'bold 96px system-ui, sans-serif';
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
-    ctx.fillText('APEX DRIFT', s / 2, s / 2 + 4);
+    ctx.fillText(text, s / 2, s / 2 + 4);
+  }, 1, 1);
+}
+
+function makeZoneLabelTexture(mult) {
+  return canvasTex(256, (ctx, s) => {
+    ctx.clearRect(0, 0, s, s);
+    ctx.fillStyle = 'rgba(255,255,255,0.95)';
+    ctx.font = 'bold 150px system-ui, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.strokeStyle = 'rgba(0,0,0,0.45)';
+    ctx.lineWidth = 10;
+    const label = typeof mult === 'number' ? `×${mult}` : mult;
+    ctx.strokeText(label, s / 2, s / 2);
+    ctx.fillText(label, s / 2, s / 2);
+  }, 1, 1);
+}
+
+function makeChevronTexture() {
+  return canvasTex(128, (ctx, s) => {
+    ctx.clearRect(0, 0, s, s);
+    ctx.fillStyle = 'rgba(255,214,90,0.9)';
+    // two chevrons pointing +v (travel direction after rotation)
+    for (const yOff of [0.18, 0.62]) {
+      ctx.beginPath();
+      ctx.moveTo(s * 0.2, s * (yOff + 0.22));
+      ctx.lineTo(s * 0.5, s * yOff);
+      ctx.lineTo(s * 0.8, s * (yOff + 0.22));
+      ctx.lineTo(s * 0.8, s * (yOff + 0.05));
+      ctx.lineTo(s * 0.5, s * (yOff - 0.18));
+      ctx.lineTo(s * 0.2, s * (yOff + 0.05));
+      ctx.closePath();
+      ctx.fill();
+    }
   }, 1, 1);
 }

@@ -8,7 +8,7 @@
  */
 import * as THREE from 'three';
 
-const SMOKE_MAX = 160;
+const SMOKE_MAX = 220;
 
 export class SmokeSystem {
   constructor(scene) {
@@ -46,7 +46,7 @@ export class SmokeSystem {
         void main() {
           if (vLife >= 1.0 || vLife < 0.0) discard;
           vec4 tex = texture2D(uMap, gl_PointCoord);
-          float a = tex.a * (1.0 - vLife) * 0.34;
+          float a = tex.a * (1.0 - vLife) * 0.52;
           vec3 col = mix(vec3(0.93, 0.93, 0.95), vec3(0.75, 0.75, 0.78), vSeed);
           gl_FragColor = vec4(col, a);
         }`,
@@ -66,8 +66,8 @@ export class SmokeSystem {
     this.vel[i * 3] = vx;
     this.vel[i * 3 + 1] = 0.7 + Math.random() * 0.9;
     this.vel[i * 3 + 2] = vz;
-    const life = 0.55 + Math.random() * 0.5;
-    this.data[i * 4] = 0.55 + intensity * 0.8;   // size
+    const life = 0.85 + Math.random() * 0.7;
+    this.data[i * 4] = 0.85 + intensity * 1.3;   // size
     this.data[i * 4 + 1] = 0;                    // life
     this.data[i * 4 + 2] = life;                 // maxLife
     this.data[i * 4 + 3] = Math.random();        // seed
@@ -90,7 +90,7 @@ export class SmokeSystem {
       p[i * 3 + 2] += v[i * 3 + 2] * dt;
       v[i * 3] *= (1 - dt * 1.6);
       v[i * 3 + 2] *= (1 - dt * 1.6);
-      d[i * 4] += dt * 2.4; // grows as it fades
+      d[i * 4] += dt * 3.2; // grows as it fades
     }
     this.points.geometry.attributes.position.needsUpdate = true;
     this.points.geometry.attributes.aData.needsUpdate = true;
@@ -140,7 +140,8 @@ export class SkidMarks {
     const px = -dz / d * width, pz = dx / d * width;
     const q = (this.heads[wheelIdx] * 2 + wheelIdx * this.max) % (this.max * 2);
     const b = q * 4;
-    const y = 0.035;
+    // y sits just ABOVE the road surface (0.10) — marks under it are hidden
+    const y = 0.13;
     const P = this.pos;
     P[b * 3] = last.x - px; P[b * 3 + 1] = y; P[b * 3 + 2] = last.z - pz;
     P[b * 3 + 3] = last.x + px; P[b * 3 + 4] = y; P[b * 3 + 5] = last.z + pz;

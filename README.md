@@ -74,21 +74,26 @@ reflection) — no physics meshes, cheap on mobile.
 
 ## Vehicle physics
 
-`src/vehicle/DriftPhysics.js` is a single-track (bicycle) model tuned **for
-drifting**, stepped at a fixed 120 Hz:
+`src/vehicle/DriftPhysics.js` is an **arcade drift model in the CarX
+tradition**, stepped at a fixed 120 Hz. Instead of simulating tire contact
+patches it tracks two things: the heading (rotated by a directly-controlled
+yaw rate) and the velocity direction (pulled toward the heading by a
+traction rate). The angle between them IS the drift angle:
 
-- Slip-angle tire forces with load transfer and a rear friction circle
-  (power-on keeps the tail loose — power-over)
-- Handbrake dumps rear grip to ~30 %; grip recovers gradually so slides are
-  holdable, not spin-outs
+- **Traction is a curve over that angle** — strong when nearly straight
+  (planted cornering), weak inside the hold zone (slides sustain at big
+  angles), rising again near the cap (the car refuses to spin)
+- **Throttle controls the angle, steering controls the radius** — more
+  throttle deepens the slide, lifting tucks it, winding in tightens it
+- **Easy initiation**: a handbrake tap dumps traction instantly, and full
+  lock at speed power-overs the tail by itself
+- **Drift thrust** keeps slides flowing instead of scrubbing to a stop;
+  the handbrake cuts engine power so it stays a true initiator
 - Mobile comfort nets (all toggleable, on by default):
-  - **Drift assist** blends steering toward the counter-steer equilibrium
-  - A **beta cap** (~66°) pulls the nose back toward the velocity vector —
-    the car refuses to spin past it
-  - **Yaw ceiling** and handbrake governor bleed unsafe rotation
-  - **Momentum retention** keeps held drifts flowing (gated on steering
-    intent so recovery slides settle naturally)
-  - **Hands-off auto-straighten** ends abandoned slides cleanly
+  - **Drift assist** holds the wheel near the sustain angle when hands come
+    off — slides keep a clean angle instead of snapping back
+  - A **beta cap** (~68°) is a soft wall — spins are physically impossible
+  - **Yaw ceiling** bleeds rotation the tires could never bend into
 
 Validate the model headlessly anytime:
 
@@ -96,9 +101,11 @@ Validate the model headlessly anytime:
 npm run test:physics
 ```
 
-It asserts straight-line stability, handbrake initiation, sustained drifts,
-no-spin recovery with idle hands, planted grip cornering, braking, reverse
-and a 4000-step NaN/bounds fuzz.
+It asserts straight-line stability, handbrake initiation, sustained
+CarX-angle drifts, no-spin recovery with idle hands, manual counter-steer,
+planted grip cornering, power-over initiation, throttle-controlled angle,
+power donuts, left/right symmetry, braking, reverse and a 4000-step
+NaN/bounds fuzz.
 
 ## Project layout
 

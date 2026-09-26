@@ -15,7 +15,7 @@ export class Environment {
     scene.fog = new THREE.Fog(0xecc18a, 150, 560);
 
     // ---- lights --------------------------------------------------------
-    this.hemi = new THREE.HemisphereLight(0xffe0b0, 0x354636, 0.85);
+    this.hemi = new THREE.HemisphereLight(0xffe0b0, 0x50432f, 0.85);
     scene.add(this.hemi);
 
     this.sun = new THREE.DirectionalLight(0xffcf9a, 2.3);
@@ -68,17 +68,23 @@ export class Environment {
     this.sky = new THREE.Mesh(skyGeo, skyMat);
     scene.add(this.sky);
 
-    // ---- ground ---------------------------------------------------------
+    // ---- ground (sandy drift-park floor, warm bounce light above) -------
     const groundGeo = new THREE.CircleGeometry(760, 48);
     groundGeo.rotateX(-Math.PI / 2);
-    this.ground = new THREE.Mesh(groundGeo, new THREE.MeshLambertMaterial({ color: 0x5d7a4a }));
+    const groundTex = makeSandTexture();
+    // polygonOffset pushes the ground back in the depth buffer so the road,
+    // curbs, zones and skidpad (all within 8 cm of it) always win depth —
+    // without this they z-fight into invisibility at phone camera distances
+    this.ground = new THREE.Mesh(groundGeo, new THREE.MeshLambertMaterial({
+      map: groundTex, polygonOffset: true, polygonOffsetFactor: 2, polygonOffsetUnits: 2,
+    }));
     this.ground.receiveShadow = true;
     scene.add(this.ground);
 
     // ---- mountains ring (fog silhouettes) -------------------------------
     const rngMul = 1;
     const mounts = new THREE.Group();
-    const mat = new THREE.MeshLambertMaterial({ color: 0x6a7f72 });
+    const mat = new THREE.MeshLambertMaterial({ color: 0x7d7260 });
     for (let i = 0; i < 16; i++) {
       const ang = (i / 16) * Math.PI * 2 + Math.sin(i * 7.3) * 0.2;
       const r = 520 + Math.sin(i * 3.1) * 60;
@@ -136,5 +142,34 @@ function makeCloudTexture() {
   }
   const t = new THREE.CanvasTexture(c);
   t.colorSpace = THREE.SRGBColorSpace;
+  return t;
+}
+
+function makeSandTexture() {
+  const c = document.createElement('canvas');
+  c.width = c.height = 256;
+  const ctx = c.getContext('2d');
+  ctx.fillStyle = '#c0a674';
+  ctx.fillRect(0, 0, 256, 256);
+  for (let i = 0; i < 2600; i++) {
+    const g = 150 + Math.random() * 70;
+    ctx.fillStyle = `rgba(${g},${g - 28},${g - 78},${0.1 + Math.random() * 0.25})`;
+    ctx.fillRect(Math.random() * 256, Math.random() * 256, 2, 2);
+  }
+  // sparse dry-grass tufts for texture variety
+  for (let i = 0; i < 90; i++) {
+    ctx.strokeStyle = `rgba(${110 + Math.random() * 40},${105 + Math.random() * 35},${60 + Math.random() * 25},0.5)`;
+    ctx.lineWidth = 1.5;
+    const x = Math.random() * 256, y = Math.random() * 256;
+    ctx.beginPath();
+    ctx.moveTo(x, y);
+    ctx.lineTo(x + (Math.random() - 0.5) * 7, y - 4 - Math.random() * 5);
+    ctx.stroke();
+  }
+  const t = new THREE.CanvasTexture(c);
+  t.wrapS = t.wrapT = THREE.RepeatWrapping;
+  t.repeat.set(30, 30);
+  t.colorSpace = THREE.SRGBColorSpace;
+  t.anisotropy = 4;
   return t;
 }

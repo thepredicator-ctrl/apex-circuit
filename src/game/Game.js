@@ -38,7 +38,7 @@ export class Game {
     container.appendChild(this.renderer.domElement);
 
     this.scene = new THREE.Scene();
-    this.camera = new THREE.PerspectiveCamera(62, window.innerWidth / window.innerHeight, 0.3, 1800);
+    this.camera = new THREE.PerspectiveCamera(62, window.innerWidth / window.innerHeight, 0.22, 1800);
 
     this.input = new Input();
     this.audio = new DriftAudio();
@@ -246,7 +246,7 @@ export class Game {
     const onAsphalt = true; // whole park is tarmac
 
     // smoke: rate scales with slip × speed
-    const want = p.drifting ? (6 + slip * 26) * Math.min(1, p.speed / 12) : 0;
+    const want = p.drifting ? (8 + slip * 34) * Math.min(1, p.speed / 12) : 0;
     this._emitRate += (want - this._emitRate) * Math.min(1, dt * 6);
     this._smokeAcc += this._emitRate * dt;
     if (this._smokeAcc >= 1) {

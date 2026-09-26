@@ -219,8 +219,13 @@ export class Car {
     this.body.rotation.z += (roll - this.body.rotation.z) * Math.min(1, dt * 8);
     this.body.rotation.x += (pitch - this.body.rotation.x) * Math.min(1, dt * 8);
 
-    // wheels: steer (front), spin (all)
-    this._steerVis += (steerInput * 0.5 - this._steerVis) * Math.min(1, dt * 10);
+    // wheels: steer (front), spin (all).
+    // Visual angle follows the ACTUAL road-wheel angle phys.steer (so the
+    // assist's counter-steer is visible during slides — very CarX).
+    // Sign: nose = +Z means car-right = -X, so a right-hand wheel angle
+    // (phys.steer > 0) must be a NEGATIVE rotation.y. Slightly exaggerated
+    // (+12%) for readability on small screens.
+    this._steerVis += (-phys.steer * 1.12 - this._steerVis) * Math.min(1, dt * 10);
     const spinRate = phys._fwdVel() / this.wheelRadius;
     this._spin += spinRate * dt;
     for (const w of this.wheels) {
