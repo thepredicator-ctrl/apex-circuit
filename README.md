@@ -1,86 +1,143 @@
-# APEX ROADS — Open World Driving
+# APEX DRIFT
 
-**APEX ROADS** is a seeded, *open-world* driving game that runs entirely in
-your browser. Every world grows deterministically from a single seed:
-an infinite network of highways, avenues, ring roads and city streets,
-villages that swell into megacities, rivers and lakes, mountain passes with
-covered cut galleries, viaducts over the water — plus regional weather,
-a full day/night cycle, lane-following traffic, and a mystery system that
-slowly unhinges the world the farther you drive from the origin.
+A mobile-first **seeded drift game** for the browser. Tap DRIFT, slide the
+rear out, chain the combo, bank the points. Every map is procedurally
+generated from a short text seed — same seed in, identical park out, on every
+device. Three.js + Vite PWA, fully offline-installable.
 
-Play it live: **https://thepredicator-ctrl.github.io/apex-circuit/**
+> This project began life as *APEX ROADS*, an open-world driving sandbox.
+> It was refactored into APEX DRIFT: the open-world systems (chunk streaming,
+> traffic, multiplayer, mystery zones, weather) were removed, the vehicle
+> model was retuned for drifting, and a compact seeded drift park replaced
+> the infinite world. The cartoon sports car asset is kept.
 
-## The World
-
-- **World-scale road network** — roads are analytic, seeded routes on two
-  lattices (highways every ~4.2 km, avenues every ~1.5 km) that meander with
-  layered noise, so they are perfectly coherent across chunks and infinite in
-  extent. Highway crossings become grade-separated interchanges with diamond
-  ramps; cities contribute rotated street grids and ring roads.
-- **Engineered road elevation** — routes march over the low-frequency terrain
-  with a 7.5 % grade limiter, never dip below water level (causeways and
-  viaducts with rails and pylons), and climb real mountains. Deep cuts get
-  portal-framed galleries.
-- **Procedural cities** — villages, towns, cities and megacities (with a
-  165 m landmark tower) spawn on flat coastal shelves: downtown towers,
-  commercial mid-rise, residential blocks, suburbs, an industrial warehouse
-  wedge, parking lots and pocket parks, all instanced and window-lit at night.
-- **Biomes & water** — oceans, beaches, plains, forests, deserts, rocky
-  mountains and snow, with rivers carving toward the sea and lakes filling
-  the basins below sea level.
-- **The Deep** — beyond ~6 km the world starts changing: ashen tints, dead
-  groves, wrecked pile-ups, stone circles, leaning monolith arches, and
-  rarely… something impossible. No meter, no warnings. You just drive.
-
-## The Drive
-
-- **The CARRERA** — a textured sports-coupe GLB with independently rigged
-  wheels (suspension travel, steering, rolling), working tail/brake lights
-  and headlight spotlights.
-- **Real vehicle physics** — a dynamic bicycle model: per-axle slip angles,
-  Pacejka-style tires with post-peak falloff, friction ellipse, load
-  transfer, aero downforce, ABS that keeps panic stops short *and steerable*
-  (100–0 km/h in ~2.8 s), a locked-rear handbrake for drift entries,
-  relaxation-length tire response and a low-speed kinematic blend.
-- **7-speed powertrain** — torque curve, clutch slip on launch, rev limiter,
-  automatic + manual (Q/E) modes, engine audio synthesized live.
-- **Traffic** — AI vehicles that follow lanes, keep gaps, overtake on
-  highways, yield near junctions, and thin out in the wilderness.
-- **Weather & time** — a continuous day/night cycle (headlights, stars,
-  city windows) and regional weather (clear / cloudy / fog / rain / storms
-  with lightning and wet-road grip loss).
-
-## Interface
-
-Speedometer + tachometer, status panel (road, region, coordinates, world
-clock, weather, seed), rotating radar minimap, a full **world map (Tab)**
-with click-to-waypoint + teleport, toasts, graphics presets (LOW/MED/HIGH
-with view distance + bloom), and settings that persist locally.
-
-## Tech
-
-- Three.js r182, zero frameworks in the game layer — modular systems:
-  `core/` (seeded noise, tuning), `world/` (terrain, road network, cities,
-  chunk streamer, scenery, mystery), `vehicle/` (physics, GLB car,
-  transmission), `traffic/`, `weather/`, `multiplayer/`, `rendering/`
-  (bloom post-FX), `ui/` (HUD, minimap, world map).
-- 192 m chunks stream in a time-budgeted build queue with prioritized
-  nearest-first ordering and full geometry disposal behind you — the world
-  never grows in memory while you drive.
-- Everything is derived from the seed: no assets to sync, and every player
-  of seed **X** drives the *same* world. Multiplayer-ready relay rooms are
-  keyed by seed (offline builds silently run solo).
-- PWA: installable, the service worker precaches the app shell + car model
-  so the whole world generates offline.
-
-## Run it
+## Play
 
 ```bash
 npm install
-npm run dev        # vite dev server
-npm run build      # production build + service worker manifest
-npm run preview    # serve the production build
+npm run dev        # http://localhost:5173
 ```
 
-Share any world with `?seed=123456` in the URL. Press **N** in-game for a
-brand-new world, **R** to snap back onto the road, **Tab** for the map.
+Production build (`dist/`, also stamps the offline service worker):
+
+```bash
+npm run build
+npm run preview
+```
+
+Deployed automatically to GitHub Pages on push to `main`
+(`.github/workflows/deploy.yml`).
+
+## Controls
+
+**Touch (phones & tablets)** — the game is built for thumbs:
+
+| Control | Action |
+|---|---|
+| ◀ ▶ (bottom-left) | steer — slide your thumb between the pads |
+| GAS (bottom-right) | throttle |
+| BRAKE | brake · hold at standstill to reverse |
+| DRIFT pill | handbrake — tap to kick the tail out, hold to keep sliding |
+
+Comfort options on the start screen: **tilt steering**, **auto-throttle**
+(one-thumb play), **drift assist** (auto counter-steer), **vibration**, mute.
+
+**Keyboard (desktop):** WASD / arrows · `SPACE` = handbrake · `R` = reset ·
+`C` = camera (chase / far / hood). Add `?touch=1` to the URL to preview the
+touch UI on desktop.
+
+## Scoring
+
+- While sliding, points accrue from **slip angle × speed × zone multiplier × combo**
+- The **combo** grows the longer a chain lives (up to ×10)
+- Painted **DRIFT ZONES** on sharp corners pay ×2 / ×3, the central
+  **skidpad** pays ×1.5
+- Stop sliding and you have ~1 s of grace to re-hook the car; run out and the
+  chain **banks** into your total
+- Wall crashes and spin-outs drop the unbanked chain
+- Best score per seed is saved on-device (`localStorage`)
+
+## Map generation
+
+`src/world/DriftMap.js` builds the park from the seed:
+
+1. 12 jittered control points on a ring → centripetal Catmull-Rom spline →
+   640 evenly spaced centerline samples with tangents, normals and curvature
+2. Sharp corners (curvature > 1/70 rad/m) become drift zones; the sharpest
+   (> 1/40) pay ×3
+3. Road ribbon, red/white curbs, striped tire walls, zone overlays, start
+   gantry + checkered line, cone / tire-stack dressing, tree scatter, and a
+   central skidpad with painted rings
+
+Collisions are analytic (nearest centerline sample + lateral clamp with
+reflection) — no physics meshes, cheap on mobile.
+
+## Vehicle physics
+
+`src/vehicle/DriftPhysics.js` is a single-track (bicycle) model tuned **for
+drifting**, stepped at a fixed 120 Hz:
+
+- Slip-angle tire forces with load transfer and a rear friction circle
+  (power-on keeps the tail loose — power-over)
+- Handbrake dumps rear grip to ~30 %; grip recovers gradually so slides are
+  holdable, not spin-outs
+- Mobile comfort nets (all toggleable, on by default):
+  - **Drift assist** blends steering toward the counter-steer equilibrium
+  - A **beta cap** (~66°) pulls the nose back toward the velocity vector —
+    the car refuses to spin past it
+  - **Yaw ceiling** and handbrake governor bleed unsafe rotation
+  - **Momentum retention** keeps held drifts flowing (gated on steering
+    intent so recovery slides settle naturally)
+  - **Hands-off auto-straighten** ends abandoned slides cleanly
+
+Validate the model headlessly anytime:
+
+```bash
+npm run test:physics
+```
+
+It asserts straight-line stability, handbrake initiation, sustained drifts,
+no-spin recovery with idle hands, planted grip cornering, braking, reverse
+and a 4000-step NaN/bounds fuzz.
+
+## Project layout
+
+```
+src/
+  main.js               bootstrap, wiring, error overlay, audio unlock
+  core/
+    RNG.js              xmur3 + mulberry32 seeded PRNG + helpers
+    Input.js            unified keyboard / touch / tilt state
+    Settings.js         localStorage prefs + per-seed best scores
+    Audio.js            WebAudio synth: engine, screech, wind, chimes
+  vehicle/
+    DriftPhysics.js     the drift model (DOM-free, unit-testable)
+    Car.js              GLB rig (nose=+Z, wheel pivots), body articulation
+    Fx.js               tire smoke (1 draw call) + skid mark ring buffer
+  world/
+    DriftMap.js         seeded track, zones, walls, props, collisions
+    Environment.js      golden-hour sky, sun shadows, clouds, mountains
+  game/
+    Game.js             orchestrator, fixed-step loop, quality governor
+    DriftScore.js       chain / combo / banking rules
+    CameraRig.js        drift-aware chase cam (3 modes, FOV by speed)
+  ui/
+    TouchControls.js    multi-touch pads, haptics, safe-area layout
+    HUD.js              score, combo chip, angle needle, popups
+    Menu.js             start screen (seed + comfort toggles), pause
+scripts/
+  test-physics.mjs      headless physics validation harness
+  build-sw.mjs          stamps the precache manifest into dist/sw.js
+  make-icons.mjs        regenerates PWA icons
+  secrets.mjs           AES-256-GCM secrets CLI (dev tooling, kept)
+```
+
+## Tech notes
+
+- Three.js r182, no framework, ~2.5 k lines of game code
+- One smoke `THREE.Points` draw call; skid marks are a preallocated quad ring
+  buffer — zero per-frame allocations in the hot path
+- Auto quality governor: sustained < 40 fps drops pixel ratio, shadows, fog
+  distance (shows a toast)
+- PWA: precache manifest stamped at build time; installs standalone in
+  landscape with safe-area-aware UI

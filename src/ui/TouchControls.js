@@ -1,108 +1,148 @@
 /**
- * TouchControls — large, multi-touch-safe on-screen controls for phones,
- * tablets and iPads (landscape). Built on pointer events with pointer
- * capture, so sliding a finger slightly off a button keeps it pressed
- * until release, and simultaneous buttons all register independently.
+ * TouchControls — thumb-first driving controls.
  *
- * Layout (landscape):
- *   left edge: steer left / right
- *   right edge: DRIFT above BRAKE above GAS, gear - / + stacked left of pedals
- *   top right (below HUD): CAM / TRANS / RESET system buttons
+ * Layout (landscape phone):
+ *   bottom-left:  big LEFT / RIGHT steer pads (slide your thumb between them)
+ *   bottom-right: GAS (large circle), BRAKE (smaller), DRIFT pill on top
+ *   small utility cluster top-right: reset / camera / mute
+ *
+ * Comfort details: pointer capture per control (multi-touch safe), thumb
+ * sliding between steer pads, ≥ 76 px targets, safe-area padding, no
+ * double-tap zoom, haptic hook, and the whole layer only mounts on touch
+ * devices (desktop gets keyboard).
  */
-
-const SVG_LEFT = '<svg viewBox="0 0 24 24"><path fill="currentColor" d="M15.5 4.5 8 12l7.5 7.5z"/></svg>';
-const SVG_RIGHT = '<svg viewBox="0 0 24 24"><path fill="currentColor" d="M8.5 4.5 16 12l-7.5 7.5z"/></svg>';
-const SVG_RESET = '<svg viewBox="0 0 24 24"><path fill="currentColor" d="M12 5V2L7 6l5 4V7a5 5 0 1 1-5 5H5a7 7 0 1 0 7-7z"/></svg>';
-const SVG_CAM = '<svg viewBox="0 0 24 24"><path fill="currentColor" d="M4 7h3l2-2h6l2 2h3a1 1 0 0 1 1 1v10a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V8a1 1 0 0 1 1-1zm8 10a4 4 0 1 0 0-8 4 4 0 0 0 0 8zm0-2a2 2 0 1 1 0-4 2 2 0 0 1 0 4z"/></svg>';
-const SVG_TRANS = '<svg viewBox="0 0 24 24"><path fill="currentColor" d="M7 4h2v6h6V4h2v16h-2v-8H9v8H7V4z"/></svg>';
+import { Settings } from '../core/Settings.js';
 
 export class TouchControls {
-  constructor(input, callbacks = {}) {
+  /**
+   * @param {HTMLElement} root #touch-root
+   * @param {object} input  Input instance
+   * @param {object} hooks  { onPause, onCamera, onReset, onMuteToggle }
+   */
+  constructor(root, input, hooks) {
+    this.root = root;
     this.input = input;
-    this.callbacks = callbacks;
-    this.enabled = false;
-    this.root = document.getElementById('touch-root');
+    this.hooks = hooks;
+    this.visible = false;
 
-    const force = new URLSearchParams(window.location.search).has('touch');
-    const coarse = window.matchMedia && window.matchMedia('(pointer: coarse)').matches;
-    const hasTouch = 'ontouchstart' in window || (navigator.maxTouchPoints || 0) > 0;
-
-    if (force || coarse || hasTouch) {
-      this._build();
-    } else {
-      // maybe a hybrid device: enable on first real touch
-      const once = () => {
-        window.removeEventListener('touchstart', once);
-        if (!this.enabled) this._build();
-      };
-      window.addEventListener('touchstart', once, { passive: true });
+    const isTouch = 'ontouchstart' in window || navigator.maxTouchPoints > 0
+      || new URLSearchParams(location.search).has('touch'); // QA override
+    this.enabled = isTouch;
+    if (!isTouch) {
+      // keyboard hint only
+      root.innerHTML = '';
+      return;
     }
+    this._build();
   }
 
   _build() {
-    if (this.enabled) return;
-    this.enabled = true;
-    this.root.innerHTML = `
-      <div class="tc">
-        <div class="tc-cluster tc-left">
-          <button class="tc-btn tc-steer" data-action="left" aria-label="Steer left">${SVG_LEFT}</button>
-          <button class="tc-btn tc-steer" data-action="right" aria-label="Steer right">${SVG_RIGHT}</button>
-        </div>
-        <div class="tc-cluster tc-right">
-          <div class="tc-gearcol">
-            <button class="tc-btn tc-gear" data-edge="gearDown" aria-label="Gear down">&minus;</button>
-            <button class="tc-btn tc-gear" data-edge="gearUp" aria-label="Gear up">+</button>
-          </div>
-          <div class="tc-pedals">
-            <button class="tc-btn tc-small" data-action="handbrake" aria-label="Drift">DRIFT</button>
-            <button class="tc-btn tc-pedal" data-action="brake" aria-label="Brake / reverse">BRAKE</button>
-            <button class="tc-btn tc-pedal tc-gas" data-action="throttle" aria-label="Throttle">GAS</button>
-          </div>
-        </div>
-        <div class="tc-cluster tc-sys">
-          <button class="tc-btn tc-sysbtn" data-edge="camera" aria-label="Switch camera">${SVG_CAM}</button>
-          <button class="tc-btn tc-sysbtn" data-edge="transmission" aria-label="Transmission mode">${SVG_TRANS}</button>
-          <button class="tc-btn tc-sysbtn" data-edge="reset" aria-label="Reset car">${SVG_RESET}</button>
-        </div>
-      </div>`;
+    const mk = (cls, html) => {
+      const el = document.createElement('div');
+      el.className = cls;
+      if (html !== undefined) el.innerHTML = html;
+      return el;
+    };
 
-    this.root.querySelectorAll('.tc-btn').forEach((btn) => {
-      const action = btn.dataset.action;
-      const edge = btn.dataset.edge;
-      const press = (e) => {
-        e.preventDefault();
-        e.stopPropagation();
-        try { btn.setPointerCapture(e.pointerId); } catch { /* older browsers */ }
-        btn.classList.add('active');
-        if (edge) {
-          const cb = this.callbacks;
-          if (edge === 'gearUp' && cb.onGearUp) cb.onGearUp();
-          else if (edge === 'gearDown' && cb.onGearDown) cb.onGearDown();
-          else if (edge === 'camera' && cb.onCamera) cb.onCamera();
-          else if (edge === 'transmission' && cb.onTransmission) cb.onTransmission();
-          else if (edge === 'reset' && cb.onReset) cb.onReset();
-        } else {
-          this.input.setTouch(action, 1);
-        }
-      };
-      const release = (e) => {
-        e.preventDefault();
-        btn.classList.remove('active');
-        if (!edge && action) this.input.setTouch(action, 0);
-      };
-      btn.addEventListener('pointerdown', press);
-      btn.addEventListener('pointerup', release);
-      btn.addEventListener('pointercancel', release);
-      btn.addEventListener('lostpointercapture', release);
-      btn.addEventListener('contextmenu', (e) => e.preventDefault());
+    // ---- steer pads -----------------------------------------------------
+    const steer = mk('tc-steer-wrap');
+    this.left = mk('tc-pad tc-steer-left', '<span>◀</span>');
+    this.right = mk('tc-pad tc-steer-right', '<span>▶</span>');
+    steer.append(this.left, this.right);
+
+    // ---- pedals ---------------------------------------------------------
+    this.drift = mk('tc-pad tc-btn tc-drift', '<span>DRIFT</span>');
+    this.gas = mk('tc-pad tc-btn tc-gas', '<span>GAS</span>');
+    this.brake = mk('tc-pad tc-btn tc-brake', '<span>BRAKE</span>');
+    const pedals = mk('tc-pedal-wrap');
+    pedals.append(this.drift, this.brake, this.gas);
+
+    // ---- utilities ------------------------------------------------------
+    const util = mk('tc-util');
+    this.resetBtn = mk('tc-mini', '⟲');
+    this.camBtn = mk('tc-mini', '🎥'.replace('🎥', '◎'));
+    this.muteBtn = mk('tc-mini', Settings.get('muted') ? '🔇' : '🔊');
+    this.pauseBtn = mk('tc-mini', '❚❚');
+    util.append(this.pauseBtn, this.camBtn, this.resetBtn, this.muteBtn);
+
+    this.root.append(util, steer, pedals);
+
+    // ---- wiring ----------------------------------------------------------
+    this._bindHold(this.left, { steer: -1 });
+    this._bindHold(this.right, { steer: 1 });
+    this._bindHold(this.gas, { throttle: 1 });
+    this._bindHold(this.brake, { brake: 1 });
+    this._bindHold(this.drift, { handbrake: true });
+
+    this._tap(this.resetBtn, () => this.hooks.onReset?.());
+    this._tap(this.camBtn, () => this.hooks.onCamera?.());
+    this._tap(this.pauseBtn, () => this.hooks.onPause?.());
+    this._tap(this.muteBtn, () => {
+      const muted = Settings.toggle('muted');
+      this.muteBtn.textContent = muted ? '🔇' : '🔊';
+      this.hooks.onMuteToggle?.(muted);
     });
-
-    // block double-tap zoom / scroll gestures over the control area
-    this.root.addEventListener('touchstart', (e) => e.preventDefault(), { passive: false });
-    this.root.addEventListener('touchmove', (e) => e.preventDefault(), { passive: false });
   }
 
-  setCallbacks(cb) {
-    this.callbacks = cb;
+  /** Multi-touch safe press-and-hold with thumb sliding for steer pads. */
+  _bindHold(el, action) {
+    const active = new Set();
+
+    const apply = () => {
+      const on = active.size > 0;
+      el.classList.toggle('tc-active', on);
+      if (action.steer !== undefined) {
+        // sliding between the two steer pads: recompute from both
+        const l = this.left._down, r = this.right._down;
+        this.input.setTouchSteer((r ? 1 : 0) - (l ? 1 : 0));
+      }
+      if (action.throttle !== undefined) this.input.setTouchThrottle(on ? 1 : 0);
+      if (action.brake !== undefined) this.input.setTouchBrake(on ? 1 : 0);
+      if (action.handbrake !== undefined) this.input.setTouchHandbrake(on);
+    };
+
+    el.addEventListener('pointerdown', (e) => {
+      e.preventDefault();
+      try { el.setPointerCapture?.(e.pointerId); } catch { /* synthetic events have no id */ }
+      active.add(e.pointerId);
+      el._down = true;
+      apply();
+    });
+    const release = (e) => {
+      active.delete(e.pointerId);
+      el._down = active.size > 0;
+      apply();
+    };
+    el.addEventListener('pointerup', release);
+    el.addEventListener('pointercancel', release);
+    el.addEventListener('lostpointercapture', release);
+    // prevent context menu on long press
+    el.addEventListener('contextmenu', (e) => e.preventDefault());
+  }
+
+  _tap(el, fn) {
+    el.addEventListener('pointerdown', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      fn();
+      try { navigator.vibrate?.(12); } catch { /* noop */ }
+    });
+    el.addEventListener('contextmenu', (e) => e.preventDefault());
+  }
+
+  show() {
+    this.root.style.display = this.enabled ? 'block' : 'none';
+    this.visible = true;
+  }
+
+  hide() {
+    if (!this.enabled) return;
+    this.root.style.display = 'none';
+    this.visible = false;
+    // safety: release everything
+    this.input.setTouchSteer(0);
+    this.input.setTouchThrottle(0);
+    this.input.setTouchBrake(0);
+    this.input.setTouchHandbrake(false);
   }
 }

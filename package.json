@@ -1,17 +1,19 @@
 {
-  "name": "apex-roads",
+  "name": "apex-drift",
   "private": true,
-  "version": "3.0.0",
+  "version": "4.0.0",
   "type": "module",
-  "description": "APEX ROADS — a seeded open-world driving game: infinite procedural highways, cities, traffic, weather and mysteries from a single world seed. Three.js + Vite PWA.",
+  "description": "APEX DRIFT — a mobile-first seeded drift game: procedurally generated drift parks with painted drift zones, handbrake physics and combo scoring. Three.js + Vite PWA.",
   "keywords": [
-    "driving",
+    "drift",
+    "drifting",
+    "racing",
     "game",
     "procedural-generation",
     "threejs",
     "webgl",
     "vehicle-physics",
-    "endless",
+    "mobile",
     "pwa",
     "vite"
   ],
@@ -21,11 +23,11 @@
     "build": "vite build && node scripts/build-sw.mjs",
     "icons": "node scripts/make-icons.mjs",
     "preview": "vite preview",
+    "test:physics": "node scripts/test-physics.mjs",
     "secrets": "node scripts/secrets.mjs"
   },
   "dependencies": {
-    "three": "^0.182.0",
-    "socket.io-client": "^4.8.1"
+    "three": "^0.182.0"
   },
   "devDependencies": {
     "vite": "^7.1.9"

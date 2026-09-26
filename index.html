@@ -4,30 +4,26 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
   <meta name="theme-color" content="#0b0f14" />
-  <meta name="description" content="APEX ROADS — a seeded open-world driving game. Infinite procedural highways, cities, traffic and weather from a single world seed, with realistic tire physics. Fully offline-installable PWA." />
+  <meta name="description" content="APEX DRIFT — a mobile-first seeded drift game. Procedurally generated drift parks with painted drift zones, handbrake physics and combo scoring. Fully offline-installable PWA." />
   <meta name="mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
-  <meta name="apple-mobile-web-app-title" content="Apex Roads" />
+  <meta name="apple-mobile-web-app-title" content="Apex Drift" />
   <meta name="format-detection" content="telephone=no" />
   <meta name="apple-touch-fullscreen" content="yes" />
-  <meta name="touch-fullscreen" content="yes" />
-  <meta name="x5-fullscreen" content="true" />
   <link rel="manifest" href="./manifest.webmanifest" />
-  <!-- iOS home-screen icon (PNG, not SVG — iOS ignores SVG apple-touch-icons) -->
   <link rel="apple-touch-icon" href="./icons/icon-192.png" />
-  <link rel="apple-touch-icon" sizes="167x167" href="./icons/icon-192.png" />
   <link rel="apple-touch-icon" sizes="180x180" href="./icons/icon-512.png" />
   <link rel="icon" type="image/svg+xml" href="./favicon.svg" />
-  <title>APEX ROADS — Open World Driving</title>
+  <title>APEX DRIFT — Seeded Drift Park</title>
   <style>
-    /* Critical loading styles inline so the loading screen looks right before JS/CSS arrive */
-    html, body { margin: 0; padding: 0; background: #0b0f14; overflow: hidden; height: 100%; }
+    /* Critical inline styles so the loading screen looks right before CSS arrives */
+    html, body { margin: 0; padding: 0; background: #0b0f14; overflow: hidden; height: 100%; overscroll-behavior: none; touch-action: none; }
     #app { position: fixed; inset: 0; }
     #app canvas { display: block; }
     .screen { position: fixed; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; z-index: 40; }
-    #loading-screen { background: radial-gradient(120% 120% at 50% 30%, #16202c 0%, #0b0f14 70%); color: #dfe9f3; font-family: system-ui, sans-serif; }
-    .spinner { width: 46px; height: 46px; border-radius: 50%; border: 4px solid rgba(255,255,255,.15); border-top-color: #ff3b30; animation: spin 0.9s linear infinite; margin-bottom: 18px; }
+    #loading-screen { background: radial-gradient(120% 120% at 50% 30%, #1b1520 0%, #0b0f14 70%); color: #dfe9f3; font-family: system-ui, sans-serif; }
+    .spinner { width: 46px; height: 46px; border-radius: 50%; border: 4px solid rgba(255,255,255,.14); border-top-color: #ff3b30; animation: spin 0.9s linear infinite; margin-bottom: 18px; }
     @keyframes spin { to { transform: rotate(360deg); } }
   </style>
 </head>
@@ -36,33 +32,22 @@
   <div id="app" aria-label="Game canvas"></div>
 
   <!-- HUD (built dynamically by ui/HUD.js) -->
-  <div id="hud-root"></div>
+  <div id="hud-root" style="display:none"></div>
 
   <!-- Touch controls (built dynamically by ui/TouchControls.js) -->
-  <div id="touch-root"></div>
+  <div id="touch-root" style="display:none"></div>
+
+  <!-- Menu overlays (start / pause, built by ui/Menu.js) -->
+  <div id="menu-root"></div>
 
   <!-- Loading -->
   <div id="loading-screen" class="screen">
     <div class="spinner"></div>
-    <div id="loading-label" style="font-size:15px; letter-spacing:4px; font-weight:600;">GENERATING WORLD…</div>
+    <div id="loading-label" style="font-size:15px; letter-spacing:4px; font-weight:600;">LOADING CAR…</div>
     <div style="width:min(420px, 70vw); height:4px; border-radius:2px; background:rgba(255,255,255,.12); margin-top:16px; overflow:hidden;">
       <div id="loading-bar" style="width:0%; height:100%; background:linear-gradient(90deg,#ff3b30,#ff9d14); transition:width .25s ease;"></div>
     </div>
-    <div id="download-state" style="margin-top:12px; font-size:11px; letter-spacing:2px; color:rgba(255,255,255,.45);"></div>
-  </div>
-
-  <!-- Start screen — pure black, one flickering light, PLAY + SETTINGS -->
-  <div id="start-screen" class="screen menu-screen" style="display:none">
-    <div class="menu-lightbar" aria-hidden="true"></div>
-    <h1 class="menu-title">APEX ROADS</h1>
-    <div class="menu-lightbar menu-lightbar-low" aria-hidden="true"></div>
-    <div class="menu-actions">
-      <button id="start-button" class="menu-btn menu-btn-play" type="button">PLAY</button>
-      <button id="menu-settings" class="menu-btn" type="button">SETTINGS</button>
-    </div>
-    <button id="install-button" class="install-btn" type="button" style="display:none; margin-top:18px;">⤓ INSTALL GAME ON DEVICE</button>
-    <button id="download-button" class="install-btn" type="button" style="display:none; margin-top:8px;">PRE-DOWNLOAD GAME TO DEVICE</button>
-    <div id="start-seed" class="start-best" style="display:none; margin-top:16px;"></div>
+    <div style="margin-top:12px; font-size:11px; letter-spacing:2px; color:rgba(255,255,255,.45);">APEX DRIFT</div>
   </div>
 
   <!-- Error overlay -->

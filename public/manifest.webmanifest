@@ -1,8 +1,8 @@
 {
-  "name": "APEX ROADS — Endless Procedural Driving",
-  "short_name": "Apex Roads",
-  "description": "An endless procedurally generated driving game with realistic tire physics and a full offline install.",
-  "id": "apex-roads",
+  "name": "APEX DRIFT — Seeded Drift Park",
+  "short_name": "Apex Drift",
+  "description": "A mobile-first seeded drift game: procedurally generated drift parks, handbrake physics, drift-zone combo scoring and a full offline install.",
+  "id": "apex-drift",
   "start_url": "./",
   "scope": "./",
   "display": "standalone",
