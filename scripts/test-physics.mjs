@@ -62,7 +62,7 @@ console.log('== 2. Handbrake tap -> held drift (THE core scenario) ==');
   const maxBeta = Math.max(...trace.map((s) => Math.abs(s.beta)));
   const avgBeta = trace.reduce((a, s) => a + Math.abs(s.beta), 0) / trace.length;
   assert('drift sustained >= 80% of window', sliding > 0.8, `${(sliding * 100).toFixed(0)}% of 3s`);
-  assert('big arcade angle held', avgBeta > 0.35, `avg beta=${avgBeta.toFixed(2)} (${(avgBeta * 57.3).toFixed(0)}°)`);
+  assert('big arcade angle held', avgBeta > 0.6, `avg beta=${avgBeta.toFixed(2)} (${(avgBeta * 57.3).toFixed(0)}°)`);
   assert('no spin-out', maxBeta < 1.3, `max beta=${maxBeta.toFixed(2)}`);
   assert('kept momentum', p.speed > 7, `${(p.speed * 3.6).toFixed(0)} km/h`);
 }
@@ -145,7 +145,7 @@ console.log('== 5b. Skidpad donut: initiate on handbrake, sustain on power ==');
   const trace = run(p, 3, () => gas({ steer: 0.85, throttle: 1, driftAssist: true }));
   const avgBeta = trace.reduce((a, s) => a + Math.abs(s.beta), 0) / trace.length;
   const maxBeta = Math.max(...trace.map((s) => Math.abs(s.beta)));
-  assert('sustained donut angle', avgBeta > 0.5, `avg beta=${(avgBeta * 57.3).toFixed(0)}°`);
+  assert('sustained donut angle', avgBeta > 0.8, `avg beta=${(avgBeta * 57.3).toFixed(0)}°`);
   assert('angle stays under the wall', maxBeta < 1.3, `max=${(maxBeta * 57.3).toFixed(0)}°`);
   assert('keeps moving in a circle', p.speed > 3, `${(p.speed * 3.6).toFixed(0)} km/h`);
 }

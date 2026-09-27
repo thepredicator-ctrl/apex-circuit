@@ -69,6 +69,23 @@ document.addEventListener('visibilitychange', () => {
   if (document.hidden && game.state === 'playing') game.pause();
 });
 
+// ---------------------------------------------------------------- gestures
+// Belt-and-braces mobile guards: no double-tap/pinch zoom, no long-press
+// text selection or iOS callout, no context menu. CSS does most of the
+// work; these catch older WebViews and OS-level quirks. Form fields stay
+// editable.
+const isEditable = (t) => !!(t && t.closest && t.closest('input, textarea, [contenteditable]'));
+['gesturestart', 'gesturechange', 'gestureend'].forEach((type) =>
+  document.addEventListener(type, (e) => e.preventDefault()));
+document.addEventListener('dblclick', (e) => e.preventDefault());
+document.addEventListener('contextmenu', (e) => e.preventDefault());
+document.addEventListener('selectstart', (e) => {
+  if (!isEditable(e.target)) e.preventDefault();
+});
+document.addEventListener('touchmove', (e) => {
+  if (!isEditable(e.target)) e.preventDefault();
+}, { passive: false });
+
 // audio unlock on first gesture (mobile requirement)
 let audioUnlocked = false;
 function unlockAudio() {

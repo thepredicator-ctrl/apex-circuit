@@ -18,6 +18,7 @@ export class CameraRig {
     this._look = new THREE.Vector3();
     this._init = false;
     this._vDir = new THREE.Vector3(0, 0, 1);
+    this._fov = camera.fov; // smoothed speed-FOV (no visible zoom pumping)
   }
 
   cycleMode() {
@@ -99,11 +100,12 @@ export class CameraRig {
     p.set(this._pos.x + sx, this._pos.y + sy, this._pos.z);
     this.camera.lookAt(this._look);
 
-    // speed FOV
+    // speed FOV — gently widened with speed (halved range + smoothed so
+    // slowing down never reads as an unwanted zoom-in)
     const speedNorm = Math.min(1, phys.speed / T_MAX);
-    const fov = fovBase + speedNorm * 13;
-    if (Math.abs(fov - this.camera.fov) > 0.05) {
-      this.camera.fov = fov;
+    this._fov += (fovBase + speedNorm * 9 - this._fov) * Math.min(1, dt * 3.5);
+    if (Math.abs(this._fov - this.camera.fov) > 0.05) {
+      this.camera.fov = this._fov;
       this.camera.updateProjectionMatrix();
     }
   }

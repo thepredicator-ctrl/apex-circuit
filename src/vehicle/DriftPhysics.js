@@ -32,7 +32,7 @@ export const TUNE = {
   accel: 12.5,          // m/s² full throttle at low speed
   vMax: 57,             // m/s top speed
   accelCurve: 0.72,     // falloff exponent toward vMax
-  driftThrust: 4.8,     // extra push while drifting so slides keep flow
+  driftThrust: 4.6,     // extra push while drifting so slides keep flow
   brakeDecel: 26,       // m/s²
   reverseAccel: 8.5,
   vRevMax: 10,
@@ -50,17 +50,17 @@ export const TUNE = {
   // ---- traction: rate (1/s) the velocity direction aligns to the nose ----
   gripHold: 6.4,        // ordinary grip — lateral velocity dies fast
   gripHoldLo: 4.6,      // grip when nearly stopped (avoid jitter)
-  driftHold: 0.92,      // hold zone WITH full throttle — big angles sustain
-  driftHoldNoT: 2.9,    // hold zone with no throttle — slide tucks & ends
-  handbrakeHold: 1.05,  // while handbrake is held — near-free rotation
-  spinCatch: 15,        // extra alignment rate per rad past the soft cap
+  driftHold: 0.62,      // hold zone WITH full throttle — big angles sustain
+  driftHoldNoT: 2.1,    // hold zone with no throttle — slide tucks & ends
+  handbrakeHold: 0.78,  // while handbrake is held — near-free rotation
+  spinCatch: 10,        // extra alignment rate per rad past the soft cap
 
   // ---- yaw control -------------------------------------------------------
   yawGrip: 7.5,         // how fast yaw chases the kinematic target (grip)
   yawDrift: 6.2,        // chase rate while sliding (snappy but not twitchy)
-  yawDriftGain: 1.85,   // ω = -gain · δ · speedFactor while sliding
+  yawDriftGain: 2.1,    // ω = -gain · δ · speedFactor while sliding
   yawHandbrakeGain: 3.0,// stronger authority during handbrake initiation
-  yawPowerKick: 0.55,   // throttle yaw kick deepening the slide (rad/s)
+  yawPowerKick: 0.72,   // throttle yaw kick deepening the slide (rad/s)
   aLatMax: 10.5,        // grip-cornering ceiling (m/s²) — keeps grip planted
 
   // ---- drift comfort nets (mobile) ---------------------------------------
@@ -159,7 +159,10 @@ export class DriftPhysics {
     const sliding = Math.abs(beta) > 0.12 && speed > 6;
     if (assist && sliding && Math.abs(input.steer) < 0.2) {
       const holdAngle = Math.sign(beta) * T.assistHold * fade;
-      const w = clamp(Math.abs(beta) * 4, 0, 1) * clamp(speed / 10, 0, 1) * 0.85;
+      // "lift = tuck": with no throttle the assist fades out so a hands-off
+      // slide ends naturally instead of holding forever at cruise speed
+      const w = clamp(Math.abs(beta) * 4, 0, 1) * clamp(speed / 10, 0, 1)
+        * (0.25 + 0.75 * clamp(input.throttle * 1.4, 0, 1)) * 0.85;
       steerTarget = clamp(lerp(steerTarget, holdAngle, w), -lock, lock);
     }
 
@@ -182,14 +185,14 @@ export class DriftPhysics {
     let blendTarget = 0;
     if (angleOver > 0) blendTarget = clamp(angleOver / 0.12, 0, 1);
     if (demandExcess > 0.2 && speed > 8 && !reversingNow) {
-      blendTarget = Math.max(blendTarget, clamp(demandExcess / 0.8, 0, 0.8));
+      blendTarget = Math.max(blendTarget, clamp(demandExcess / 0.55, 0, 0.9));
     }
     if (input.handbrake && speed > 3.5) blendTarget = 1;
     // hysteresis: once sliding, stay sliding until nearly straight
-    if (this.driftBlend > 0.5 && Math.abs(beta) > 0.08 && speed > 5) {
-      blendTarget = Math.max(blendTarget, 0.85);
+    if (this.driftBlend > 0.5 && Math.abs(beta) > 0.1 && speed > 4) {
+      blendTarget = Math.max(blendTarget, 0.9);
     }
-    const blendRate = (blendTarget > this.driftBlend ? 7.5 : 4.5) * dt;
+    const blendRate = (blendTarget > this.driftBlend ? 8 : 4) * dt;
     this.driftBlend += clamp(blendTarget - this.driftBlend, -blendRate, blendRate);
 
     // handbrake traction dump (fast in, moderate out)
@@ -240,8 +243,11 @@ export class DriftPhysics {
     const coast = Math.pow(clamp(1 - Math.max(vFwd, 0) / T.vMax, 0, 1), T.accelCurve);
     // handbrake locks the rear: engine push and drift thrust collapse
     const powerCut = 1 - 0.8 * this.handbrakeBlend;
+    const slideF = this.driftBlend * clamp(Math.abs(beta) * 1.3, 0, 1);
     if (throttle > 0.01 && vFwd > -0.5) {
-      aFwd += throttle * T.accel * coast * powerCut;
+      // engine push tapers off in a deep slide — drift thrust carries the
+      // car instead, so power donuts settle at a speed instead of ballooning
+      aFwd += throttle * T.accel * coast * powerCut * (1 - 0.75 * slideF);
       // drift thrust: full-lock slides keep their speed (arcade cheat)
       if (this.driftBlend > 0.3) {
         aFwd += throttle * T.driftThrust * this.driftBlend
@@ -259,7 +265,7 @@ export class DriftPhysics {
     }
     aFwd -= T.dragK * vFwd * Math.abs(vFwd) + T.rollK * vFwd;
     // tire scrub while sliding (small — slides should flow, not stall)
-    aFwd -= this.driftBlend * 2.3 * Math.abs(beta) * clamp(speed / 9, 0, 1) * Math.sign(vFwd || 1);
+    aFwd -= this.driftBlend * 1.5 * Math.abs(beta) * clamp(speed / 9, 0, 1) * Math.sign(vFwd || 1);
 
     // ---------------- integrate --------------------------------------------
     // heading
